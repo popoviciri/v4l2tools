@@ -311,7 +311,7 @@ static COMMAND_LIST cmdline_commands[] =
    //{ CommandKeypress,      "-keypress",   "k",  "Cycle between capture and pause on ENTER", 0},
    //{ CommandInitialState,  "-initial",    "i",  "Initial state. Use 'record' or 'pause'. Default 'record'", 1},
    { CommandQP,            "-qp",         "qp", "Quantisation parameter. Use approximately 10-40. Default 0 (off)", 1},
-   { CommandInlineHeaders, "-inline",     "ih", "Insert inline headers (SPS, PPS) to stream", 0},
+   { CommandInlineHeaders, "-inline",     "ih", "Insert inline headers (SPS, PPS) to stream", 1},
    //{ CommandSegmentFile,   "-segment",    "sg", "Segment output file in to multiple files at specified interval <ms>", 1},
    //{ CommandSegmentWrap,   "-wrap",       "wr", "In segment mode, wrap any numbered filename back to 1 when reach number", 1},
    //{ CommandSegmentStart,  "-start",      "sn", "In segment mode, start with specified segment number", 1},
@@ -379,7 +379,7 @@ static void default_status(MMALCAM_STATE *state)
    //state->onTime = 5000;
    //state->offTime = 5000;
    state->bCapturing = 0;
-   state->bInlineHeaders = 0;
+   state->bInlineHeaders = 1;
    //state->segmentSize = 0;  // 0 = not segmenting the file.
    //state->segmentNumber = 1;
    //state->segmentWrap = 0; // Point at which to wrap segment number back to 1. 0 = no wrap
