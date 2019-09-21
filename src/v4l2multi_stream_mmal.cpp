@@ -2318,7 +2318,7 @@ static void still_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
 
    PORT_USERDATA *pData = (PORT_USERDATA *)port->userdata;
 
-    fprintf(stderr, "still callback\n");
+   //fprintf(stderr, "still callback\n");
    if (pData)
    {
       int bytes_written = buffer->length;
@@ -2431,7 +2431,7 @@ static void video_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
          }
          else
          {
-            fprintf(stderr, "write video data callback\n");
+            //fprintf(stderr, "write video data callback\n");
             bytes_written = pData->pstate->videoOutput->write((char*)buffer->data, buffer->length);
             //bytes_written = buffer->length;
          }
@@ -2512,7 +2512,7 @@ static void mjpeg_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
          }
          else
          {
-            fprintf(stderr, "write mjpeg data callback\n");
+            //fprintf(stderr, "write mjpeg data callback\n");
             if (buffer->length && pData->file_handle)
             {
                mmal_buffer_header_mem_lock(buffer);
