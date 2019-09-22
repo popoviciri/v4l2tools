@@ -127,7 +127,9 @@ struct MMALCAM_STATE_S
    int jpeg_quality;                   /// JPEG quality setting (1-100)
    int jpeg_restart_interval;          /// JPEG restart interval. 0 for none.
    MMAL_PARAM_THUMBNAIL_CONFIG_T thumbnailConfig; // JPEG thumbnail
-   int mjpeg_bitrate;                        /// Requested bitrate
+   int mjpeg_width;                    /// Requested MJPEG width
+   int mjpeg_height;                   /// Requested MJPEG height
+   int mjpeg_bitrate;                  /// Requested MJPEG bitrate
    int bitrate;                        /// Requested bitrate
    int framerate;                      /// Requested frame rate (fps)
    int intraperiod;                    /// Intra-refresh period (key frame rate)
@@ -161,10 +163,12 @@ struct MMALCAM_STATE_S
    MMAL_COMPONENT_T *still_encoder_component; /// Pointer to the encoder component
    MMAL_CONNECTION_T *preview_connection; /// Pointer to the connection from camera or splitter to preview
    MMAL_CONNECTION_T *splitter_connection;/// Pointer to the connection from camera to splitter
+   MMAL_CONNECTION_T *isp_connection;     /// Pointer to the connection from camera to isp
    MMAL_CONNECTION_T *video_encoder_connection; /// Pointer to the connection from camera to encoder
    MMAL_CONNECTION_T *mjpeg_encoder_connection; /// Pointer to the connection from camera to encoder
    MMAL_CONNECTION_T *still_encoder_connection; /// Pointer to the connection from camera to encoder
 
+   MMAL_POOL_T *isp_pool; /// Pointer to the pool of buffers used by splitter output port 0
    MMAL_POOL_T *splitter_pool; /// Pointer to the pool of buffers used by splitter output port 0
    MMAL_POOL_T *video_encoder_pool; /// Pointer to the pool of buffers used by encoder output port
    MMAL_POOL_T *mjpeg_encoder_pool; /// Pointer to the pool of buffers used by encoder output port
@@ -177,9 +181,9 @@ struct MMALCAM_STATE_S
 
    int inlineMotionVectors;             /// Encoder outputs inline Motion Vectors
    char *imv_filename;                  /// filename of inline Motion Vectors output
-   int raw_output;                      /// Output raw video from camera as well
+   //int raw_output;                      /// Output raw video from camera as well
    RAW_OUTPUT_FMT raw_output_fmt;       /// The raw video format
-   char *raw_filename;                  /// Filename for raw video output
+   //char *raw_filename;                  /// Filename for raw video output
    int intra_refresh_type;              /// What intra refresh type to use. -1 to not set.
    int frame;
    //char *pts_filename;
@@ -190,6 +194,7 @@ struct MMALCAM_STATE_S
    //bool netListen;
    MMAL_BOOL_T addSPSTiming;
    int slices;
+   char *v4l2loopback_dev;              /// v4l2loopback device for video output
    V4l2Output* videoOutput;
 };
 
@@ -263,8 +268,12 @@ static int still_encoding_xref_size = sizeof(still_encoding_xref) / sizeof(still
 /// Command ID's and Structure defining our command line options
 enum
 {
+   CommandV4L2LoopbackDev,
    CommandQuality,
    CommandBitrate,
+   CommandMjpegBitrate,
+   CommandMjpegWidth,
+   CommandMjpegHeight,
    //CommandTimeout,
    //CommandDemoMode,
    CommandFramerate,
@@ -298,8 +307,12 @@ enum
 
 static COMMAND_LIST cmdline_commands[] =
 {
+   { CommandV4L2LoopbackDev, "-videoout", "vo", "V4L2Loopback device for video output (default /dev/video90)", 1 },
    { CommandQuality,       "-quality",    "q",  "Set jpeg quality <0 to 100>", 1 },
    { CommandBitrate,       "-bitrate",    "b",  "Set bitrate. Use bits per second (e.g. 10MBits/s would be -b 10000000)", 1 },
+   { CommandMjpegBitrate,  "-mjpegbitrate", "mjb", "Set MJPEG bitrate. Use bits per second (e.g. 10MBits/s would be -b 10000000)", 1 },
+   { CommandMjpegWidth,    "-mjpegwidth", "mjw", "Set MJPEG output width", 1 },
+   { CommandMjpegHeight,   "-mjpegheight", "mjh", "Set MJPEG output height", 1 },
    //{ CommandTimeout,       "-timeout",    "t",  "Time (in ms) to capture for. If not specified, set to 5s. Zero to disable", 1 },
    //{ CommandDemoMode,      "-demo",       "d",  "Run a demo mode (cycle through range of camera options, no capture)", 1},
    { CommandFramerate,     "-framerate",  "fps","Specify the frames per second to record", 1},
@@ -311,7 +324,7 @@ static COMMAND_LIST cmdline_commands[] =
    //{ CommandKeypress,      "-keypress",   "k",  "Cycle between capture and pause on ENTER", 0},
    //{ CommandInitialState,  "-initial",    "i",  "Initial state. Use 'record' or 'pause'. Default 'record'", 1},
    { CommandQP,            "-qp",         "qp", "Quantisation parameter. Use approximately 10-40. Default 0 (off)", 1},
-   { CommandInlineHeaders, "-inline",     "ih", "Insert inline headers (SPS, PPS) to stream", 1},
+   { CommandInlineHeaders, "-inline",     "ih", "Insert inline headers (SPS, PPS) to stream", 0},
    //{ CommandSegmentFile,   "-segment",    "sg", "Segment output file in to multiple files at specified interval <ms>", 1},
    //{ CommandSegmentWrap,   "-wrap",       "wr", "In segment mode, wrap any numbered filename back to 1 when reach number", 1},
    //{ CommandSegmentStart,  "-start",      "sn", "In segment mode, start with specified segment number", 1},
@@ -353,6 +366,7 @@ static void default_status(MMALCAM_STATE *state)
    raspicommonsettings_set_defaults(&state->common_settings);
 
    // Now set anything non-zero
+   state->v4l2loopback_dev = "/dev/video90";
    state->jpeg_quality = 85;
    state->still_encoding = MMAL_ENCODING_JPEG;
    state->jpeg_restart_interval = 0;
@@ -361,7 +375,9 @@ static void default_status(MMALCAM_STATE *state)
    state->thumbnailConfig.height = 48;
    state->thumbnailConfig.quality = 35;
    //state->timeout = -1; // replaced with 5000ms later if unset
-   state->common_settings.width = 640;       // Default to 1080p
+   state->mjpeg_width = 640;
+   state->mjpeg_height = 480;
+   state->common_settings.width = 640;
    state->common_settings.height = 480;
    state->mjpeg_encoding = MMAL_ENCODING_MJPEG;
    state->video_encoding = MMAL_ENCODING_H264;
@@ -452,21 +468,27 @@ static void dump_status(MMALCAM_STATE *state)
 
    raspicommonsettings_dump_parameters(&state->common_settings);
 
-   fprintf(stderr, "JPEG Quality %d\n", state->jpeg_quality);
-   fprintf(stderr, "bitrate %d, framerate %d\n", state->bitrate, state->framerate);
+   fprintf(stderr, "framerate %d\n", state->framerate);
+   fprintf(stderr, "\n");
+   //fprintf(stderr, "JPEG Quality %d\n", state->jpeg_quality);
+   fprintf(stderr, "H264 bitrate %d\n", state->bitrate);
    fprintf(stderr, "H264 Profile %s\n", raspicli_unmap_xref(state->profile, profile_map, profile_map_size));
    fprintf(stderr, "H264 Level %s\n", raspicli_unmap_xref(state->level, level_map, level_map_size));
    fprintf(stderr, "H264 Quantisation level %d, Inline headers %s\n", state->quantisationParameter, state->bInlineHeaders ? "Yes" : "No");
    fprintf(stderr, "H264 Fill SPS Timings %s\n", state->addSPSTiming ? "Yes" : "No");
    fprintf(stderr, "H264 Intra refresh type %s, period %d\n", raspicli_unmap_xref(state->intra_refresh_type, intra_refresh_map, intra_refresh_map_size), state->intraperiod);
    //fprintf(stderr, "H264 Slices %d\n", state->slices);
+   fprintf(stderr, "\n");
+   fprintf(stderr, "MJPEG bitrate %d\n", state->mjpeg_bitrate);
+   fprintf(stderr, "MJPEG width %d, height %d\n", state->mjpeg_width, state->mjpeg_height);
+   fprintf(stderr, "\n");
 
    // Not going to display segment data unless asked for it.
    //if (state->segmentSize)
    //   fprintf(stderr, "Segment size %d, segment wrap value %d, initial segment number %d\n", state->segmentSize, state->segmentWrap, state->segmentNumber);
 
-   if (state->raw_output)
-      fprintf(stderr, "Raw output enabled, format %s\n", raspicli_unmap_xref(state->raw_output_fmt, raw_output_fmt_map, raw_output_fmt_map_size));
+   //if (state->raw_output)
+   //   fprintf(stderr, "Raw output enabled, format %s\n", raspicli_unmap_xref(state->raw_output_fmt, raw_output_fmt_map, raw_output_fmt_map_size));
 
    //fprintf(stderr, "Wait method : ");
    //for (i=0; i<wait_method_description_size; i++)
@@ -521,12 +543,12 @@ static void application_help_message(char *app_name)
    }
 
    // Raw output format options
-   fprintf(stdout, "\n\nRaw output format options :\n%s", raw_output_fmt_map[0].mode );
-
-   for (i=1; i<raw_output_fmt_map_size; i++)
-   {
-      fprintf(stdout, ",%s", raw_output_fmt_map[i].mode);
-   }
+   //fprintf(stdout, "\n\nRaw output format options :\n%s", raw_output_fmt_map[0].mode );
+   //
+   //for (i=1; i<raw_output_fmt_map_size; i++)
+   //{
+   //   fprintf(stdout, ",%s", raw_output_fmt_map[i].mode);
+   //}
 
    fprintf(stdout, "\n\n");
 
@@ -574,19 +596,19 @@ static int parse_cmdline(int argc, const char **argv, MMALCAM_STATE *state)
       //  We are now dealing with a command line option
       switch (command_id)
       {
-      case CommandQuality: // Quality = 1-100
-         if (sscanf(argv[i + 1], "%u", &state->jpeg_quality) == 1)
-         {
-            if (state->jpeg_quality > 100)
-            {
-               fprintf(stderr, "Setting max JPEG quality = 100\n");
-               state->jpeg_quality = 100;
-            }
-            i++;
-         }
-         else
-            valid = 0;
-         break;
+      //case CommandQuality: // Quality = 1-100
+      //   if (sscanf(argv[i + 1], "%u", &state->jpeg_quality) == 1)
+      //   {
+      //      if (state->jpeg_quality > 100)
+      //      {
+      //         fprintf(stderr, "Setting max JPEG quality = 100\n");
+      //         state->jpeg_quality = 100;
+      //      }
+      //      i++;
+      //   }
+      //   else
+      //      valid = 0;
+      //   break;
 
       case CommandBitrate: // 1-100
          if (sscanf(argv[i + 1], "%u", &state->bitrate) == 1)
@@ -596,6 +618,30 @@ static int parse_cmdline(int argc, const char **argv, MMALCAM_STATE *state)
          else
             valid = 0;
 
+         break;
+
+      case CommandMjpegBitrate: // 1-100
+         if (sscanf(argv[i + 1], "%u", &state->mjpeg_bitrate) == 1)
+         {
+            i++;
+         }
+         else
+            valid = 0;
+
+         break;
+
+      case CommandMjpegWidth:
+         if (sscanf(argv[i + 1], "%u", &state->mjpeg_width) == 1)
+            i++;
+         else
+            valid = 0;
+         break;
+
+      case CommandMjpegHeight:
+         if (sscanf(argv[i + 1], "%u", &state->mjpeg_height) == 1)
+            i++;
+         else
+            valid = 0;
          break;
 
       //case CommandTimeout: // Time to run viewfinder/capture
@@ -857,6 +903,22 @@ static int parse_cmdline(int argc, const char **argv, MMALCAM_STATE *state)
             state->level = MMAL_VIDEO_LEVEL_H264_4;
 
          i++;
+         break;
+      }
+
+      case CommandV4L2LoopbackDev:  // v4l2loopback device for video output
+      {
+         int len = strlen(argv[i + 1]);
+         if (len)
+         {
+            state->v4l2loopback_dev = (char *)malloc(len + 1);
+            vcos_assert(state->v4l2loopback_dev);
+            if (state->v4l2loopback_dev)
+               strncpy(state->v4l2loopback_dev, argv[i + 1], len+1);
+            i++;
+         }
+         else
+            valid = 0;
          break;
       }
 
@@ -1451,6 +1513,125 @@ static void destroy_splitter_component(MMALCAM_STATE *state)
    {
       mmal_component_destroy(state->splitter_component);
       state->splitter_component = NULL;
+   }
+}
+
+/**
+ * Create the ISP component, set up its ports
+ *
+ * @param state Pointer to state control struct
+ *
+ * @return MMAL_SUCCESS if all OK, something else otherwise
+ *
+ */
+static MMAL_STATUS_T create_isp_component(MMALCAM_STATE *state)
+{
+   MMAL_COMPONENT_T *isp = 0;
+   MMAL_PORT_T *isp_output = NULL;
+   MMAL_ES_FORMAT_T *format;
+   MMAL_STATUS_T status;
+   MMAL_POOL_T *pool;
+   int i;
+
+   if (state->camera_component == NULL)
+   {
+      status = MMAL_ENOSYS;
+      vcos_log_error("Camera component must be created before isp");
+      if (isp)
+         mmal_component_destroy(isp);
+      return status;
+   }
+
+   /* Create the component */
+   status = mmal_component_create("vc.ril.isp", &isp);
+
+   if (status != MMAL_SUCCESS)
+   {
+      vcos_log_error("Failed to create isp component");
+      if (isp)
+         mmal_component_destroy(isp);
+      return status;
+   }
+
+   MMAL_PORT_T *port = isp->output[0];
+
+   port->format->encoding = MMAL_ENCODING_I420;
+   port->format->es->video.width = VCOS_ALIGN_UP(state->mjpeg_width, 32);
+   port->format->es->video.height = VCOS_ALIGN_UP(state->mjpeg_height, 16);
+   port->format->es->video.crop.x = 0;
+   port->format->es->video.crop.y = 0;
+   port->format->es->video.crop.width = state->mjpeg_width;
+   port->format->es->video.crop.height = state->mjpeg_height;
+   port->format->es->video.frame_rate.num = state->framerate;
+   port->format->es->video.frame_rate.den = VIDEO_FRAME_RATE_DEN;
+
+   //port->format->es->video.crop.width =  state->mjpeg_width;
+   //port->format->es->video.crop.height = state->mjpeg_height;
+   ////if (port->format->es->video.crop.width > 1920)
+   ////{
+   ////   //Display can only go up to a certain resolution before underflowing
+   ////   port->format->es->video.crop.width /= 2;
+   ////   port->format->es->video.crop.height /= 2;
+   ////}
+   //port->format->es->video.width = VCOS_ALIGN_UP(port->format->es->video.crop.width, 32);
+   //port->format->es->video.height = VCOS_ALIGN_UP(port->format->es->video.crop.height, 16);
+   //port->format->encoding = MMAL_ENCODING_I420;
+   status = mmal_port_format_commit(port);
+   if (status != MMAL_SUCCESS)
+   {
+      vcos_log_error("Failed to commit port format on isp output");
+      if (isp)
+         mmal_component_destroy(isp);
+      return status;
+   }
+
+   /* Enable component */
+   status = mmal_component_enable(isp);
+
+   if (status != MMAL_SUCCESS)
+   {
+      vcos_log_error("isp component couldn't be enabled");
+      if (isp)
+         mmal_component_destroy(isp);
+      return status;
+   }
+
+   /* Create pool of buffer headers for the output port to consume */
+   //isp_output = isp->output[1];
+   //pool = mmal_port_pool_create(isp_output, isp_output->buffer_num, isp_output->buffer_size);
+   //
+   //if (!pool)
+   //{
+   //   vcos_log_error("Failed to create buffer header pool for isp output port %s", isp_output->name);
+   //}
+   //
+   //state->isp_pool = pool;
+   state->isp_component = isp;
+
+   if (state->common_settings.verbose)
+      fprintf(stderr, "isp component done\n");
+
+   return status;
+}
+
+/**
+ * Destroy the isp component
+ *
+ * @param state Pointer to state control struct
+ *
+ */
+static void destroy_isp_component(MMALCAM_STATE *state)
+{
+   // Get rid of any port buffers first
+   if (state->isp_pool)
+   {
+      mmal_port_pool_destroy(state->isp_component->output[1], state->isp_pool);
+   }
+
+   if (state->isp_component)
+   {
+      mmal_component_destroy(state->isp_component);
+      state->isp_component = NULL;
    }
 }
 
@@ -2440,7 +2621,7 @@ static void video_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
 
          if (bytes_written != buffer->length)
          {
-            vcos_log_error("Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
+            vcos_log_error("video: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
             pData->abort = 1;
          }
       }
@@ -2529,7 +2710,7 @@ static void mjpeg_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
 
          if (bytes_written != buffer->length)
          {
-            vcos_log_error("Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
+            vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
             pData->abort = 1;
          }
       }
@@ -2589,6 +2770,7 @@ int main(int argc, char* argv[])
       check_disable_port(mjpeg_encoder_output_port); \
       check_disable_port(still_encoder_output_port); \
       check_disable_port(splitter_output_port); \
+      check_disable_port(isp_output_port); \
       if (state.video_encoder_connection) \
          mmal_connection_destroy(state.video_encoder_connection); \
       if (state.mjpeg_encoder_connection) \
@@ -2597,6 +2779,8 @@ int main(int argc, char* argv[])
          mmal_connection_destroy(state.still_encoder_connection); \
       if (state.splitter_connection) \
          mmal_connection_destroy(state.splitter_connection); \
+      if (state.isp_connection) \
+         mmal_connection_destroy(state.isp_connection); \
       if (state.callback_data.file_handle && state.callback_data.file_handle != stdout) \
          fclose(state.callback_data.file_handle); \
       if (state.callback_data.imv_file_handle && state.callback_data.imv_file_handle != stdout) \
@@ -2609,12 +2793,15 @@ int main(int argc, char* argv[])
          mmal_component_disable(state.still_encoder_component); \
       if (state.splitter_component) \
          mmal_component_disable(state.splitter_component); \
+      if (state.isp_component) \
+         mmal_component_disable(state.isp_component); \
       if (state.camera_component) \
          mmal_component_disable(state.camera_component); \
       destroy_video_encoder_component(&state); \
       destroy_mjpeg_encoder_component(&state); \
       destroy_still_encoder_component(&state); \
       destroy_splitter_component(&state);      \
+      destroy_isp_component(&state);      \
       destroy_camera_component(&state);        \
       if (state.common_settings.verbose) \
          fprintf(stderr, "Close down completed, all components disconnected, disabled and destroyed\n\n"); \
@@ -2623,8 +2810,6 @@ int main(int argc, char* argv[])
 
     MMALCAM_STATE state;
     int exit_code = 0;
-    const char *in_devname = "/dev/video0";
-    const char *out_devname = "/dev/video90";
 
     MMAL_STATUS_T status = MMAL_SUCCESS;
     MMAL_PORT_T *camera_preview_port = NULL;
@@ -2637,6 +2822,9 @@ int main(int argc, char* argv[])
     MMAL_PORT_T *mjpeg_encoder_output_port = NULL;
     MMAL_PORT_T *still_encoder_input_port = NULL;
     MMAL_PORT_T *still_encoder_output_port = NULL;
+    MMAL_PORT_T *isp_input_port = NULL;
+    MMAL_PORT_T *isp_output_port = NULL;
+    MMAL_PORT_T *isp_2nd_output_port = NULL;
     MMAL_PORT_T *splitter_input_port = NULL;
     MMAL_PORT_T *splitter_output_port = NULL;
     MMAL_PORT_T *splitter_preview_port = NULL;
@@ -2683,11 +2871,11 @@ int main(int argc, char* argv[])
     //initLogger(state.common_settings.verbose);
 
     // init V4L2 output interface
-    V4L2DeviceParameters outparam(out_devname, V4L2_PIX_FMT_H264, state.common_settings.width, state.common_settings.height, 0, state.common_settings.verbose);
+    V4L2DeviceParameters outparam(state.v4l2loopback_dev, V4L2_PIX_FMT_H264, state.common_settings.width, state.common_settings.height, 0, state.common_settings.verbose);
     state.videoOutput = V4l2Output::create(outparam, ioTypeOut);
     if (state.videoOutput == NULL)
     {
-        vcos_log_error("%s: Cannot create V4L2 output interface for device: %s", __func__, out_devname);
+        vcos_log_error("%s: Cannot create V4L2 output interface for device: %s", __func__, state.v4l2loopback_dev);
         exit(2);
     }
 
@@ -2699,15 +2887,23 @@ int main(int argc, char* argv[])
         vcos_log_error("%s: Failed to create camera component", __func__);
         exit_code = 2;
     }
+    else if ((status = create_isp_component(&state)) != MMAL_SUCCESS)
+    {
+        vcos_log_error("%s: Failed to create isp component", __func__);
+        destroy_camera_component(&state);
+        exit_code = 2;
+    }
     else if ((status = create_video_encoder_component(&state)) != MMAL_SUCCESS)
     {
         vcos_log_error("%s: Failed to create video encode component", __func__);
+        destroy_isp_component(&state);
         destroy_camera_component(&state);
         exit_code = 2;
     }
     else if ((status = create_mjpeg_encoder_component(&state)) != MMAL_SUCCESS)
     {
         vcos_log_error("%s: Failed to create mjpeg encode component", __func__);
+        destroy_isp_component(&state);
         destroy_camera_component(&state);
         destroy_video_encoder_component(&state);
         exit_code = 2;
@@ -2715,6 +2911,7 @@ int main(int argc, char* argv[])
     else if ((status = create_still_encoder_component(&state)) != MMAL_SUCCESS)
     {
         vcos_log_error("%s: Failed to create still encode component", __func__);
+        destroy_isp_component(&state);
         destroy_camera_component(&state);
         destroy_video_encoder_component(&state);
         destroy_mjpeg_encoder_component(&state);
@@ -2729,6 +2926,9 @@ int main(int argc, char* argv[])
         camera_video_port   = state.camera_component->output[MMAL_CAMERA_VIDEO_PORT];
         camera_still_port   = state.camera_component->output[MMAL_CAMERA_CAPTURE_PORT];
         //preview_input_port  = state.preview_parameters.preview_component->input[0];
+        isp_input_port  = state.isp_component->input[0];
+        isp_output_port = state.isp_component->output[0];
+        isp_2nd_output_port = state.isp_component->output[1];
         video_encoder_input_port  = state.video_encoder_component->input[0];
         video_encoder_output_port = state.video_encoder_component->output[0];
         mjpeg_encoder_input_port  = state.mjpeg_encoder_component->input[0];
@@ -2749,16 +2949,27 @@ int main(int argc, char* argv[])
             vcos_log_error("%s: Failed to connect camera video port to video encoder input", __func__);
             mmal_cleanup;
         }
-        // Now connect the still to the encoder
+        // Now connect the preview to the isp
         if (state.common_settings.verbose)
-            fprintf(stderr, "camera preview port ---> mjpeg encoder\n");
-        status = connect_ports(camera_preview_port, mjpeg_encoder_input_port, &state.mjpeg_encoder_connection);
+            fprintf(stderr, "camera preview port ---> isp\n");
+        status = connect_ports(camera_preview_port, isp_input_port, &state.isp_connection);
+        if (status != MMAL_SUCCESS)
+        {
+            state.isp_connection = NULL;
+            vcos_log_error("%s: Failed to connect camera preview port to isp input", __func__);
+            mmal_cleanup;
+        }
+        // Now connect the isp to the mjpeg encoder
+        if (state.common_settings.verbose)
+            fprintf(stderr, "isp ---> mjpeg encoder\n");
+        status = connect_ports(isp_output_port, mjpeg_encoder_input_port, &state.mjpeg_encoder_connection);
         if (status != MMAL_SUCCESS)
         {
             state.mjpeg_encoder_connection = NULL;
-            vcos_log_error("%s: Failed to connect camera preview port to mjpeg encoder input", __func__);
+            vcos_log_error("%s: Failed to connect isp to mjpeg encoder input", __func__);
             mmal_cleanup;
         }
+
         //if (state.common_settings.verbose)
         //    fprintf(stderr, "camera preview port ---> still encoder\n");
         //status = connect_ports(camera_preview_port, still_encoder_input_port, &state.still_encoder_connection);
@@ -2843,6 +3054,7 @@ int main(int argc, char* argv[])
         video_encoder_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
         mjpeg_encoder_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
         still_encoder_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
+        //isp_2nd_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
 
         if (state.common_settings.verbose)
             fprintf(stderr, "Enabling video encoder output port\n");
@@ -2880,7 +3092,6 @@ int main(int argc, char* argv[])
         //    mmal_cleanup;
         //}
 
-        int running = 1;
         int num;
         int q;
 
@@ -2923,11 +3134,11 @@ int main(int argc, char* argv[])
         //      vcos_log_error("Unable to send a buffer to still encoder output port (%d)", q);
         //}
 
-        while (running)
-        {
-           // Change state
-           state.bCapturing = !state.bCapturing;
+        // Change state
+        state.bCapturing = !state.bCapturing;
 
+        while (!state.callback_data.abort)
+        {
            if (mmal_port_parameter_set_boolean(camera_video_port, MMAL_PARAMETER_CAPTURE, state.bCapturing) != MMAL_SUCCESS)
            {
               // How to handle?
