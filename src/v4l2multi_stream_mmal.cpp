@@ -2625,8 +2625,10 @@ static void video_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
 
          if (bytes_written != buffer->length)
          {
-            vcos_log_error("video: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
-            pData->abort = 1;
+            vcos_log_error("video: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
+            // Let's not abort for now
+            //vcos_log_error("video: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
+            //pData->abort = 1;
          }
       }
 
@@ -2714,8 +2716,10 @@ static void mjpeg_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
 
          if (bytes_written != buffer->length)
          {
-            vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
-            pData->abort = 1;
+            vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
+            // Let's not abort for now
+            //vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
+            //pData->abort = 1;
          }
       }
    }
