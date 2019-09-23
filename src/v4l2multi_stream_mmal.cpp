@@ -3026,11 +3026,13 @@ int main(int argc, char* argv[])
             else
             {
                 // make output file/pipe non-blocking
-                int fd = fileno(state.callback_data.file_handle);
-                int flags;
-                flags = fcntl(fd, F_GETFL, 0);
-                flags |= O_NONBLOCK;
-                fcntl(fd, F_SETFL, flags);
+                //int fd = fileno(state.callback_data.file_handle);
+                //int flags;
+                //flags = fcntl(fd, F_GETFL, 0);
+                //flags |= O_NONBLOCK;
+                //fcntl(fd, F_SETFL, flags);
+                // disable buffering
+                //setvbuf(state.callback_data.file_handle, NULL, _IONBF, 0);
             }
         }
 
