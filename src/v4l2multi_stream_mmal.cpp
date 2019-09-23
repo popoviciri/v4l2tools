@@ -381,8 +381,8 @@ static void default_status(MMALCAM_STATE *state)
    state->common_settings.height = 480;
    state->mjpeg_encoding = MMAL_ENCODING_MJPEG;
    state->video_encoding = MMAL_ENCODING_H264;
-   state->mjpeg_bitrate = 1000000; // This is a decent default bitrate for 1080p
-   state->bitrate = 1000000; // This is a decent default bitrate for 1080p
+   state->mjpeg_bitrate = 2000000;
+   state->bitrate = 2000000;
    state->framerate = VIDEO_FRAME_RATE_NUM;
    state->intraperiod = -1;    // Not set
    state->quantisationParameter = 0;
