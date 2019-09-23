@@ -381,8 +381,8 @@ static void default_status(MMALCAM_STATE *state)
    state->common_settings.height = 480;
    state->mjpeg_encoding = MMAL_ENCODING_MJPEG;
    state->video_encoding = MMAL_ENCODING_H264;
-   state->mjpeg_bitrate = 1000000; // This is a decent default bitrate for 1080p
-   state->bitrate = 1000000; // This is a decent default bitrate for 1080p
+   state->mjpeg_bitrate = 2000000;
+   state->bitrate = 2000000;
    state->framerate = VIDEO_FRAME_RATE_NUM;
    state->intraperiod = -1;    // Not set
    state->quantisationParameter = 0;
@@ -1711,10 +1711,10 @@ static MMAL_STATUS_T create_video_encoder_component(MMALCAM_STATE *state)
    encoder_output->format->bitrate = state->bitrate;
 
    if (state->video_encoding == MMAL_ENCODING_H264)
-      encoder_output->buffer_size = encoder_output->buffer_size_recommended;
+      encoder_output->buffer_size = encoder_output->buffer_size_recommended << 1;
    else
       encoder_output->buffer_size = 256<<10;
-
+   fprintf(stderr, "h264 buffer size: %u\n", encoder_output->buffer_size);
 
    if (encoder_output->buffer_size < encoder_output->buffer_size_min)
       encoder_output->buffer_size = encoder_output->buffer_size_min;
@@ -2040,9 +2040,11 @@ static MMAL_STATUS_T create_mjpeg_encoder_component(MMALCAM_STATE *state)
 
    if (state->mjpeg_encoding == MMAL_ENCODING_H264)
       encoder_output->buffer_size = encoder_output->buffer_size_recommended;
+   else if (state->mjpeg_encoding == MMAL_ENCODING_MJPEG)
+      encoder_output->buffer_size = 256<<9;
    else
       encoder_output->buffer_size = 256<<10;
-
+   fprintf(stderr, "mjpeg buffer size: %u\n", encoder_output->buffer_size);
 
    if (encoder_output->buffer_size < encoder_output->buffer_size_min)
       encoder_output->buffer_size = encoder_output->buffer_size_min;
