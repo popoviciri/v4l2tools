@@ -130,6 +130,7 @@ struct MMALCAM_STATE_S
    int mjpeg_width;                    /// Requested MJPEG width
    int mjpeg_height;                   /// Requested MJPEG height
    int mjpeg_bitrate;                  /// Requested MJPEG bitrate
+   int mjpeg_framerate;                /// Requested MJPEG frame rate (fps)
    int bitrate;                        /// Requested bitrate
    int framerate;                      /// Requested frame rate (fps)
    int intraperiod;                    /// Intra-refresh period (key frame rate)
@@ -272,6 +273,7 @@ enum
    CommandQuality,
    CommandBitrate,
    CommandMjpegBitrate,
+   CommandMjpegFramerate,
    CommandMjpegWidth,
    CommandMjpegHeight,
    //CommandTimeout,
@@ -311,6 +313,7 @@ static COMMAND_LIST cmdline_commands[] =
    { CommandQuality,       "-quality",    "q",  "Set jpeg quality <0 to 100>", 1 },
    { CommandBitrate,       "-bitrate",    "b",  "Set bitrate. Use bits per second (e.g. 10MBits/s would be -b 10000000)", 1 },
    { CommandMjpegBitrate,  "-mjpegbitrate", "mjb", "Set MJPEG bitrate. Use bits per second (e.g. 10MBits/s would be -b 10000000)", 1 },
+   { CommandMjpegFramerate,"-mjpegframerate", "mjfps","Specify the MJPEG frames per second to record", 1},
    { CommandMjpegWidth,    "-mjpegwidth", "mjw", "Set MJPEG output width", 1 },
    { CommandMjpegHeight,   "-mjpegheight", "mjh", "Set MJPEG output height", 1 },
    //{ CommandTimeout,       "-timeout",    "t",  "Time (in ms) to capture for. If not specified, set to 5s. Zero to disable", 1 },
@@ -382,6 +385,7 @@ static void default_status(MMALCAM_STATE *state)
    state->mjpeg_encoding = MMAL_ENCODING_MJPEG;
    state->video_encoding = MMAL_ENCODING_H264;
    state->mjpeg_bitrate = 2000000;
+   state->mjpeg_framerate = 5;
    state->bitrate = 2000000;
    state->framerate = VIDEO_FRAME_RATE_NUM;
    state->intraperiod = -1;    // Not set
@@ -468,10 +472,9 @@ static void dump_status(MMALCAM_STATE *state)
 
    raspicommonsettings_dump_parameters(&state->common_settings);
 
-   fprintf(stderr, "framerate %d\n", state->framerate);
-   fprintf(stderr, "\n");
    //fprintf(stderr, "JPEG Quality %d\n", state->jpeg_quality);
    fprintf(stderr, "H264 bitrate %d\n", state->bitrate);
+   fprintf(stderr, "H264 framerate %d\n", state->framerate);
    fprintf(stderr, "H264 Profile %s\n", raspicli_unmap_xref(state->profile, profile_map, profile_map_size));
    fprintf(stderr, "H264 Level %s\n", raspicli_unmap_xref(state->level, level_map, level_map_size));
    fprintf(stderr, "H264 Quantisation level %d, Inline headers %s\n", state->quantisationParameter, state->bInlineHeaders ? "Yes" : "No");
@@ -480,6 +483,7 @@ static void dump_status(MMALCAM_STATE *state)
    //fprintf(stderr, "H264 Slices %d\n", state->slices);
    fprintf(stderr, "\n");
    fprintf(stderr, "MJPEG bitrate %d\n", state->mjpeg_bitrate);
+   fprintf(stderr, "MJPEG framerate %d\n", state->mjpeg_framerate);
    fprintf(stderr, "MJPEG width %d, height %d\n", state->mjpeg_width, state->mjpeg_height);
    fprintf(stderr, "\n");
 
@@ -684,6 +688,18 @@ static int parse_cmdline(int argc, const char **argv, MMALCAM_STATE *state)
       //
       //   break;
       //}
+
+      case CommandMjpegFramerate: // fps to record
+      {
+         if (sscanf(argv[i + 1], "%u", &state->mjpeg_framerate) == 1)
+         {
+            // TODO : What limits do we need for fps 1 - 30 - 120??
+            i++;
+         }
+         else
+            valid = 0;
+         break;
+      }
 
       case CommandFramerate: // fps to record
       {
@@ -1562,20 +1578,8 @@ static MMAL_STATUS_T create_isp_component(MMALCAM_STATE *state)
    port->format->es->video.crop.y = 0;
    port->format->es->video.crop.width = state->mjpeg_width;
    port->format->es->video.crop.height = state->mjpeg_height;
-   port->format->es->video.frame_rate.num = state->framerate;
+   port->format->es->video.frame_rate.num = state->mjpeg_framerate;
    port->format->es->video.frame_rate.den = VIDEO_FRAME_RATE_DEN;
-
-   //port->format->es->video.crop.width =  state->mjpeg_width;
-   //port->format->es->video.crop.height = state->mjpeg_height;
-   ////if (port->format->es->video.crop.width > 1920)
-   ////{
-   ////   //Display can only go up to a certain resolution before underflowing
-   ////   port->format->es->video.crop.width /= 2;
-   ////   port->format->es->video.crop.height /= 2;
-   ////}
-   //port->format->es->video.width = VCOS_ALIGN_UP(port->format->es->video.crop.width, 32);
-   //port->format->es->video.height = VCOS_ALIGN_UP(port->format->es->video.crop.height, 16);
-   //port->format->encoding = MMAL_ENCODING_I420;
    status = mmal_port_format_commit(port);
    if (status != MMAL_SUCCESS)
    {
