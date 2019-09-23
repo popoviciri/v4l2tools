@@ -2044,8 +2044,6 @@ static MMAL_STATUS_T create_mjpeg_encoder_component(MMALCAM_STATE *state)
 
    if (state->mjpeg_encoding == MMAL_ENCODING_H264)
       encoder_output->buffer_size = encoder_output->buffer_size_recommended;
-   else if (state->mjpeg_encoding == MMAL_ENCODING_MJPEG)
-      encoder_output->buffer_size = 256<<9;
    else
       encoder_output->buffer_size = 256<<10;
    fprintf(stderr, "mjpeg buffer size: %u\n", encoder_output->buffer_size);
