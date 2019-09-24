@@ -103,6 +103,7 @@ typedef struct
    //FILE *raw_file_handle;               /// File handle to write raw data to.
    int  flush_buffers;
    //FILE *pts_file_handle;               /// File timestamps
+   int64_t mjpeg_frame_duration_ms;
 } PORT_USERDATA;
 
 /** Possible raw output formats
@@ -240,30 +241,30 @@ static XREF_T  intra_refresh_map[] =
 
 static int intra_refresh_map_size = sizeof(intra_refresh_map) / sizeof(intra_refresh_map[0]);
 
-static XREF_T  raw_output_fmt_map[] =
-{
-   {"yuv",  RAW_OUTPUT_FMT_YUV},
-   {"rgb",  RAW_OUTPUT_FMT_RGB},
-   {"gray", RAW_OUTPUT_FMT_GRAY},
-};
+//static XREF_T  raw_output_fmt_map[] =
+//{
+//   {"yuv",  RAW_OUTPUT_FMT_YUV},
+//   {"rgb",  RAW_OUTPUT_FMT_RGB},
+//   {"gray", RAW_OUTPUT_FMT_GRAY},
+//};
+//
+//static int raw_output_fmt_map_size = sizeof(raw_output_fmt_map) / sizeof(raw_output_fmt_map[0]);
 
-static int raw_output_fmt_map_size = sizeof(raw_output_fmt_map) / sizeof(raw_output_fmt_map[0]);
-
-static struct
-{
-   char *format;
-   MMAL_FOURCC_T encoding;
-} still_encoding_xref[] =
-{
-   {"jpg", MMAL_ENCODING_JPEG},
-   {"bmp", MMAL_ENCODING_BMP},
-   {"gif", MMAL_ENCODING_GIF},
-   {"png", MMAL_ENCODING_PNG},
-   {"ppm", MMAL_ENCODING_PPM},
-   {"tga", MMAL_ENCODING_TGA}
-};
-
-static int still_encoding_xref_size = sizeof(still_encoding_xref) / sizeof(still_encoding_xref[0]);
+//static struct
+//{
+//   char *format;
+//   MMAL_FOURCC_T encoding;
+//} still_encoding_xref[] =
+//{
+//   {"jpg", MMAL_ENCODING_JPEG},
+//   {"bmp", MMAL_ENCODING_BMP},
+//   {"gif", MMAL_ENCODING_GIF},
+//   {"png", MMAL_ENCODING_PNG},
+//   {"ppm", MMAL_ENCODING_PPM},
+//   {"tga", MMAL_ENCODING_TGA}
+//};
+//
+//static int still_encoding_xref_size = sizeof(still_encoding_xref) / sizeof(still_encoding_xref[0]);
 
 
 /// Command ID's and Structure defining our command line options
@@ -462,7 +463,7 @@ static void check_camera_model(int cam_num)
  */
 static void dump_status(MMALCAM_STATE *state)
 {
-   int i;
+   //int i;
 
    if (!state)
    {
@@ -1376,140 +1377,140 @@ static void destroy_camera_component(MMALCAM_STATE *state)
  * @return MMAL_SUCCESS if all OK, something else otherwise
  *
  */
-static MMAL_STATUS_T create_splitter_component(MMALCAM_STATE *state)
-{
-   MMAL_COMPONENT_T *splitter = 0;
-   MMAL_PORT_T *splitter_output = NULL;
-   MMAL_ES_FORMAT_T *format;
-   MMAL_STATUS_T status;
-   MMAL_POOL_T *pool;
-   int i;
-
-   if (state->camera_component == NULL)
-   {
-      status = MMAL_ENOSYS;
-      vcos_log_error("Camera component must be created before splitter");
-      if (splitter)
-         mmal_component_destroy(splitter);
-      return status;
-   }
-
-   /* Create the component */
-   status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_SPLITTER, &splitter);
-
-   if (status != MMAL_SUCCESS)
-   {
-      vcos_log_error("Failed to create splitter component");
-      if (splitter)
-         mmal_component_destroy(splitter);
-      return status;
-   }
-
-   if (!splitter->input_num)
-   {
-      status = MMAL_ENOSYS;
-      vcos_log_error("Splitter doesn't have any input port");
-      if (splitter)
-         mmal_component_destroy(splitter);
-      return status;
-   }
-
-   if (splitter->output_num < 2)
-   {
-      status = MMAL_ENOSYS;
-      vcos_log_error("Splitter doesn't have enough output ports");
-      if (splitter)
-         mmal_component_destroy(splitter);
-      return status;
-   }
-
-   /* Ensure there are enough buffers to avoid dropping frames: */
-   mmal_format_copy(splitter->input[0]->format, state->camera_component->output[MMAL_CAMERA_PREVIEW_PORT]->format);
-
-   if (splitter->input[0]->buffer_num < VIDEO_OUTPUT_BUFFERS_NUM)
-      splitter->input[0]->buffer_num = VIDEO_OUTPUT_BUFFERS_NUM;
-
-   status = mmal_port_format_commit(splitter->input[0]);
-
-   if (status != MMAL_SUCCESS)
-   {
-      vcos_log_error("Unable to set format on splitter input port");
-      if (splitter)
-         mmal_component_destroy(splitter);
-      return status;
-   }
-
-   /* Splitter can do format conversions, configure format for its output port: */
-   for (i = 0; i < splitter->output_num; i++)
-   {
-      mmal_format_copy(splitter->output[i]->format, splitter->input[0]->format);
-
-      if (i == SPLITTER_OUTPUT_PORT)
-      {
-         format = splitter->output[i]->format;
-
-         switch (state->raw_output_fmt)
-         {
-         case RAW_OUTPUT_FMT_YUV:
-         case RAW_OUTPUT_FMT_GRAY: /* Grayscale image contains only luma (Y) component */
-            format->encoding = MMAL_ENCODING_I420;
-            format->encoding_variant = MMAL_ENCODING_I420;
-            break;
-         case RAW_OUTPUT_FMT_RGB:
-            if (mmal_util_rgb_order_fixed(state->camera_component->output[MMAL_CAMERA_CAPTURE_PORT]))
-               format->encoding = MMAL_ENCODING_RGB24;
-            else
-               format->encoding = MMAL_ENCODING_BGR24;
-            format->encoding_variant = 0;  /* Irrelevant when not in opaque mode */
-            break;
-         default:
-            status = MMAL_EINVAL;
-            vcos_log_error("unknown raw output format");
-            if (splitter)
-               mmal_component_destroy(splitter);
-            return status;
-         }
-      }
-
-      status = mmal_port_format_commit(splitter->output[i]);
-
-      if (status != MMAL_SUCCESS)
-      {
-         vcos_log_error("Unable to set format on splitter output port %d", i);
-         if (splitter)
-            mmal_component_destroy(splitter);
-         return status;
-      }
-   }
-
-   /* Enable component */
-   status = mmal_component_enable(splitter);
-
-   if (status != MMAL_SUCCESS)
-   {
-      vcos_log_error("splitter component couldn't be enabled");
-      if (splitter)
-         mmal_component_destroy(splitter);
-      return status;
-   }
-
-   /* Create pool of buffer headers for the output port to consume */
-   splitter_output = splitter->output[SPLITTER_OUTPUT_PORT];
-   pool = mmal_port_pool_create(splitter_output, splitter_output->buffer_num, splitter_output->buffer_size);
-
-   if (!pool)
-   {
-      vcos_log_error("Failed to create buffer header pool for splitter output port %s", splitter_output->name);
-   }
-
-   state->splitter_pool = pool;
-   state->splitter_component = splitter;
-
-   if (state->common_settings.verbose)
-      fprintf(stderr, "Splitter component done\n");
-
-   return status;
-}
+//static MMAL_STATUS_T create_splitter_component(MMALCAM_STATE *state)
+//{
+//   MMAL_COMPONENT_T *splitter = 0;
+//   MMAL_PORT_T *splitter_output = NULL;
+//   MMAL_ES_FORMAT_T *format;
+//   MMAL_STATUS_T status;
+//   MMAL_POOL_T *pool;
+//   int i;
+//
+//   if (state->camera_component == NULL)
+//   {
+//      status = MMAL_ENOSYS;
+//      vcos_log_error("Camera component must be created before splitter");
+//      if (splitter)
+//         mmal_component_destroy(splitter);
+//      return status;
+//   }
+//
+//   /* Create the component */
+//   status = mmal_component_create(MMAL_COMPONENT_DEFAULT_VIDEO_SPLITTER, &splitter);
+//
+//   if (status != MMAL_SUCCESS)
+//   {
+//      vcos_log_error("Failed to create splitter component");
+//      if (splitter)
+//         mmal_component_destroy(splitter);
+//      return status;
+//   }
+//
+//   if (!splitter->input_num)
+//   {
+//      status = MMAL_ENOSYS;
+//      vcos_log_error("Splitter doesn't have any input port");
+//      if (splitter)
+//         mmal_component_destroy(splitter);
+//      return status;
+//   }
+//
+//   if (splitter->output_num < 2)
+//   {
+//      status = MMAL_ENOSYS;
+//      vcos_log_error("Splitter doesn't have enough output ports");
+//      if (splitter)
+//         mmal_component_destroy(splitter);
+//      return status;
+//   }
+//
+//   /* Ensure there are enough buffers to avoid dropping frames: */
+//   mmal_format_copy(splitter->input[0]->format, state->camera_component->output[MMAL_CAMERA_PREVIEW_PORT]->format);
+//
+//   if (splitter->input[0]->buffer_num < VIDEO_OUTPUT_BUFFERS_NUM)
+//      splitter->input[0]->buffer_num = VIDEO_OUTPUT_BUFFERS_NUM;
+//
+//   status = mmal_port_format_commit(splitter->input[0]);
+//
+//   if (status != MMAL_SUCCESS)
+//   {
+//      vcos_log_error("Unable to set format on splitter input port");
+//      if (splitter)
+//         mmal_component_destroy(splitter);
+//      return status;
+//   }
+//
+//   /* Splitter can do format conversions, configure format for its output port: */
+//   for (i = 0; i < splitter->output_num; i++)
+//   {
+//      mmal_format_copy(splitter->output[i]->format, splitter->input[0]->format);
+//
+//      if (i == SPLITTER_OUTPUT_PORT)
+//      {
+//         format = splitter->output[i]->format;
+//
+//         switch (state->raw_output_fmt)
+//         {
+//         case RAW_OUTPUT_FMT_YUV:
+//         case RAW_OUTPUT_FMT_GRAY: /* Grayscale image contains only luma (Y) component */
+//            format->encoding = MMAL_ENCODING_I420;
+//            format->encoding_variant = MMAL_ENCODING_I420;
+//            break;
+//         case RAW_OUTPUT_FMT_RGB:
+//            if (mmal_util_rgb_order_fixed(state->camera_component->output[MMAL_CAMERA_CAPTURE_PORT]))
+//               format->encoding = MMAL_ENCODING_RGB24;
+//            else
+//               format->encoding = MMAL_ENCODING_BGR24;
+//            format->encoding_variant = 0;  /* Irrelevant when not in opaque mode */
+//            break;
+//         default:
+//            status = MMAL_EINVAL;
+//            vcos_log_error("unknown raw output format");
+//            if (splitter)
+//               mmal_component_destroy(splitter);
+//            return status;
+//         }
+//      }
+//
+//      status = mmal_port_format_commit(splitter->output[i]);
+//
+//      if (status != MMAL_SUCCESS)
+//      {
+//         vcos_log_error("Unable to set format on splitter output port %d", i);
+//         if (splitter)
+//            mmal_component_destroy(splitter);
+//         return status;
+//      }
+//   }
+//
+//   /* Enable component */
+//   status = mmal_component_enable(splitter);
+//
+//   if (status != MMAL_SUCCESS)
+//   {
+//      vcos_log_error("splitter component couldn't be enabled");
+//      if (splitter)
+//         mmal_component_destroy(splitter);
+//      return status;
+//   }
+//
+//   /* Create pool of buffer headers for the output port to consume */
+//   splitter_output = splitter->output[SPLITTER_OUTPUT_PORT];
+//   pool = mmal_port_pool_create(splitter_output, splitter_output->buffer_num, splitter_output->buffer_size);
+//
+//   if (!pool)
+//   {
+//      vcos_log_error("Failed to create buffer header pool for splitter output port %s", splitter_output->name);
+//   }
+//
+//   state->splitter_pool = pool;
+//   state->splitter_component = splitter;
+//
+//   if (state->common_settings.verbose)
+//      fprintf(stderr, "Splitter component done\n");
+//
+//   return status;
+//}
 
 /**
  * Destroy the splitter component
@@ -1543,11 +1544,10 @@ static void destroy_splitter_component(MMALCAM_STATE *state)
 static MMAL_STATUS_T create_isp_component(MMALCAM_STATE *state)
 {
    MMAL_COMPONENT_T *isp = 0;
-   MMAL_PORT_T *isp_output = NULL;
-   MMAL_ES_FORMAT_T *format;
+   //MMAL_PORT_T *isp_output = NULL;
+   //MMAL_ES_FORMAT_T *format;
    MMAL_STATUS_T status;
-   MMAL_POOL_T *pool;
-   int i;
+   //MMAL_POOL_T *pool;
 
    if (state->camera_component == NULL)
    {
@@ -1578,7 +1578,7 @@ static MMAL_STATUS_T create_isp_component(MMALCAM_STATE *state)
    port->format->es->video.crop.y = 0;
    port->format->es->video.crop.width = state->mjpeg_width;
    port->format->es->video.crop.height = state->mjpeg_height;
-   port->format->es->video.frame_rate.num = state->mjpeg_framerate;
+   port->format->es->video.frame_rate.num = state->framerate;
    port->format->es->video.frame_rate.den = VIDEO_FRAME_RATE_DEN;
    status = mmal_port_format_commit(port);
    if (status != MMAL_SUCCESS)
@@ -1601,7 +1601,7 @@ static MMAL_STATUS_T create_isp_component(MMALCAM_STATE *state)
    }
 
    /* Create pool of buffer headers for the output port to consume */
-   //isp_output = isp->output[1];
+   //isp_output = isp->output[0];
    //pool = mmal_port_pool_create(isp_output, isp_output->buffer_num, isp_output->buffer_size);
    //
    //if (!pool)
@@ -2344,127 +2344,127 @@ static void destroy_mjpeg_encoder_component(MMALCAM_STATE *state)
  *
  * @return a MMAL_STATUS, MMAL_SUCCESS if all OK, something else otherwise
  */
-static MMAL_STATUS_T create_still_encoder_component(MMALCAM_STATE *state)
-{
-   MMAL_COMPONENT_T *encoder = 0;
-   MMAL_PORT_T *encoder_input = NULL, *encoder_output = NULL;
-   MMAL_STATUS_T status;
-   MMAL_POOL_T *pool;
-
-   status = mmal_component_create(MMAL_COMPONENT_DEFAULT_IMAGE_ENCODER, &encoder);
-
-   if (status != MMAL_SUCCESS)
-   {
-      vcos_log_error("Unable to create JPEG encoder component");
-      if (encoder)
-         mmal_component_destroy(encoder);
-      return status;
-   }
-
-   if (!encoder->input_num || !encoder->output_num)
-   {
-      status = MMAL_ENOSYS;
-      vcos_log_error("JPEG encoder doesn't have input/output ports");
-      if (encoder)
-         mmal_component_destroy(encoder);
-      return status;
-   }
-
-   encoder_input = encoder->input[0];
-   encoder_output = encoder->output[0];
-
-   // We want same format on input and output
-   mmal_format_copy(encoder_output->format, encoder_input->format);
-
-   // Specify out output format
-   encoder_output->format->encoding = state->still_encoding;
-
-   encoder_output->buffer_size = encoder_output->buffer_size_recommended;
-
-   if (encoder_output->buffer_size < encoder_output->buffer_size_min)
-      encoder_output->buffer_size = encoder_output->buffer_size_min;
-
-   encoder_output->buffer_num = encoder_output->buffer_num_recommended;
-
-   if (encoder_output->buffer_num < encoder_output->buffer_num_min)
-      encoder_output->buffer_num = encoder_output->buffer_num_min;
-
-   // Commit the port changes to the output port
-   status = mmal_port_format_commit(encoder_output);
-
-   if (status != MMAL_SUCCESS)
-   {
-      vcos_log_error("Unable to set format on still encoder output port");
-      if (encoder)
-         mmal_component_destroy(encoder);
-      return status;
-   }
-
-   // Set the JPEG quality level
-   status = mmal_port_parameter_set_uint32(encoder_output, MMAL_PARAMETER_JPEG_Q_FACTOR, state->jpeg_quality);
-
-   if (status != MMAL_SUCCESS)
-   {
-      vcos_log_error("Unable to set JPEG quality");
-      if (encoder)
-         mmal_component_destroy(encoder);
-      return status;
-   }
-
-   // Set the JPEG restart interval
-   status = mmal_port_parameter_set_uint32(encoder_output, MMAL_PARAMETER_JPEG_RESTART_INTERVAL, state->jpeg_restart_interval);
-
-   if (state->jpeg_restart_interval && status != MMAL_SUCCESS)
-   {
-      vcos_log_error("Unable to set JPEG restart interval");
-      if (encoder)
-         mmal_component_destroy(encoder);
-      return status;
-   }
-
-   // Set up any required thumbnail
-   {
-      MMAL_PARAMETER_THUMBNAIL_CONFIG_T param_thumb = {{MMAL_PARAMETER_THUMBNAIL_CONFIGURATION, sizeof(MMAL_PARAMETER_THUMBNAIL_CONFIG_T)}, 0, 0, 0, 0};
-
-      if ( state->thumbnailConfig.enable &&
-            state->thumbnailConfig.width > 0 && state->thumbnailConfig.height > 0 )
-      {
-         // Have a valid thumbnail defined
-         param_thumb.enable = 1;
-         param_thumb.width = state->thumbnailConfig.width;
-         param_thumb.height = state->thumbnailConfig.height;
-         param_thumb.quality = state->thumbnailConfig.quality;
-      }
-      status = mmal_port_parameter_set(encoder->control, &param_thumb.hdr);
-   }
-
-   //  Enable component
-   status = mmal_component_enable(encoder);
-
-   if (status  != MMAL_SUCCESS)
-   {
-      vcos_log_error("Unable to enable video encoder component");
-      if (encoder)
-         mmal_component_destroy(encoder);
-      return status;
-   }
-
-   /* Create pool of buffer headers for the output port to consume */
-   pool = mmal_port_pool_create(encoder_output, encoder_output->buffer_num, encoder_output->buffer_size);
-
-   if (!pool)
-   {
-      vcos_log_error("Failed to create buffer header pool for encoder output port %s", encoder_output->name);
-   }
-
-   state->still_encoder_pool = pool;
-   state->still_encoder_component = encoder;
-
-   if (state->common_settings.verbose)
-      fprintf(stderr, "Encoder component done\n");
-
-   return status;
-}
+//static MMAL_STATUS_T create_still_encoder_component(MMALCAM_STATE *state)
+//{
+//   MMAL_COMPONENT_T *encoder = 0;
+//   MMAL_PORT_T *encoder_input = NULL, *encoder_output = NULL;
+//   MMAL_STATUS_T status;
+//   MMAL_POOL_T *pool;
+//
+//   status = mmal_component_create(MMAL_COMPONENT_DEFAULT_IMAGE_ENCODER, &encoder);
+//
+//   if (status != MMAL_SUCCESS)
+//   {
+//      vcos_log_error("Unable to create JPEG encoder component");
+//      if (encoder)
+//         mmal_component_destroy(encoder);
+//      return status;
+//   }
+//
+//   if (!encoder->input_num || !encoder->output_num)
+//   {
+//      status = MMAL_ENOSYS;
+//      vcos_log_error("JPEG encoder doesn't have input/output ports");
+//      if (encoder)
+//         mmal_component_destroy(encoder);
+//      return status;
+//   }
+//
+//   encoder_input = encoder->input[0];
+//   encoder_output = encoder->output[0];
+//
+//   // We want same format on input and output
+//   mmal_format_copy(encoder_output->format, encoder_input->format);
+//
+//   // Specify out output format
+//   encoder_output->format->encoding = state->still_encoding;
+//
+//   encoder_output->buffer_size = encoder_output->buffer_size_recommended;
+//
+//   if (encoder_output->buffer_size < encoder_output->buffer_size_min)
+//      encoder_output->buffer_size = encoder_output->buffer_size_min;
+//
+//   encoder_output->buffer_num = encoder_output->buffer_num_recommended;
+//
+//   if (encoder_output->buffer_num < encoder_output->buffer_num_min)
+//      encoder_output->buffer_num = encoder_output->buffer_num_min;
+//
+//   // Commit the port changes to the output port
+//   status = mmal_port_format_commit(encoder_output);
+//
+//   if (status != MMAL_SUCCESS)
+//   {
+//      vcos_log_error("Unable to set format on still encoder output port");
+//      if (encoder)
+//         mmal_component_destroy(encoder);
+//      return status;
+//   }
+//
+//   // Set the JPEG quality level
+//   status = mmal_port_parameter_set_uint32(encoder_output, MMAL_PARAMETER_JPEG_Q_FACTOR, state->jpeg_quality);
+//
+//   if (status != MMAL_SUCCESS)
+//   {
+//      vcos_log_error("Unable to set JPEG quality");
+//      if (encoder)
+//         mmal_component_destroy(encoder);
+//      return status;
+//   }
+//
+//   // Set the JPEG restart interval
+//   status = mmal_port_parameter_set_uint32(encoder_output, MMAL_PARAMETER_JPEG_RESTART_INTERVAL, state->jpeg_restart_interval);
+//
+//   if (state->jpeg_restart_interval && status != MMAL_SUCCESS)
+//   {
+//      vcos_log_error("Unable to set JPEG restart interval");
+//      if (encoder)
+//         mmal_component_destroy(encoder);
+//      return status;
+//   }
+//
+//   // Set up any required thumbnail
+//   {
+//      MMAL_PARAMETER_THUMBNAIL_CONFIG_T param_thumb = {{MMAL_PARAMETER_THUMBNAIL_CONFIGURATION, sizeof(MMAL_PARAMETER_THUMBNAIL_CONFIG_T)}, 0, 0, 0, 0};
+//
+//      if ( state->thumbnailConfig.enable &&
+//            state->thumbnailConfig.width > 0 && state->thumbnailConfig.height > 0 )
+//      {
+//         // Have a valid thumbnail defined
+//         param_thumb.enable = 1;
+//         param_thumb.width = state->thumbnailConfig.width;
+//         param_thumb.height = state->thumbnailConfig.height;
+//         param_thumb.quality = state->thumbnailConfig.quality;
+//      }
+//      status = mmal_port_parameter_set(encoder->control, &param_thumb.hdr);
+//   }
+//
+//   //  Enable component
+//   status = mmal_component_enable(encoder);
+//
+//   if (status  != MMAL_SUCCESS)
+//   {
+//      vcos_log_error("Unable to enable video encoder component");
+//      if (encoder)
+//         mmal_component_destroy(encoder);
+//      return status;
+//   }
+//
+//   /* Create pool of buffer headers for the output port to consume */
+//   pool = mmal_port_pool_create(encoder_output, encoder_output->buffer_num, encoder_output->buffer_size);
+//
+//   if (!pool)
+//   {
+//      vcos_log_error("Failed to create buffer header pool for encoder output port %s", encoder_output->name);
+//   }
+//
+//   state->still_encoder_pool = pool;
+//   state->still_encoder_component = encoder;
+//
+//   if (state->common_settings.verbose)
+//      fprintf(stderr, "Encoder component done\n");
+//
+//   return status;
+//}
 
 /**
  * Destroy the encoder component
@@ -2495,78 +2495,73 @@ static void destroy_still_encoder_component(MMALCAM_STATE *state)
  * @param port Pointer to port from which callback originated
  * @param buffer mmal buffer header pointer
  */
-static void still_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
-{
-   int complete = 0;
-
-   // We pass our file handle and other stuff in via the userdata field.
-
-   PORT_USERDATA *pData = (PORT_USERDATA *)port->userdata;
-
-   //fprintf(stderr, "still callback\n");
-   if (pData)
-   {
-      int bytes_written = buffer->length;
-
-      if (buffer->length && pData->file_handle)
-      {
-         mmal_buffer_header_mem_lock(buffer);
-
-         bytes_written = fwrite(buffer->data, 1, buffer->length, pData->file_handle);
-
-         mmal_buffer_header_mem_unlock(buffer);
-      }
-
-      // We need to check we wrote what we wanted - it's possible we have run out of storage.
-      //if (bytes_written != buffer->length)
-      //{
-      //   vcos_log_error("Unable to write buffer to file - aborting");
-      //   complete = 1;
-      //}
-
-      // Now flag if we have completed
-      if (buffer->flags & (MMAL_BUFFER_HEADER_FLAG_FRAME_END | MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED)) {
-         fflush(pData->file_handle);
-         fprintf(stderr, "jpeg encode complete\n");
-         complete = 1;
-      }
-   }
-   else
-   {
-      vcos_log_error("Received a encoder buffer callback with no state");
-   }
-
-   // release buffer back to the pool
-   mmal_buffer_header_release(buffer);
-
-   // and send one back to the port (if still open)
-   if (port->is_enabled)
-   {
-      MMAL_STATUS_T status = MMAL_SUCCESS;
-      MMAL_BUFFER_HEADER_T *new_buffer;
-
-      new_buffer = mmal_queue_get(pData->pstate->still_encoder_pool->queue);
-
-      if (new_buffer)
-      {
-         status = mmal_port_send_buffer(port, new_buffer);
-      }
-      if (!new_buffer || status != MMAL_SUCCESS)
-         vcos_log_error("Unable to return a buffer to the still encoder port");
-
-      if (complete)
-      {
-         MMAL_PORT_T *camera_still_port = pData->pstate->camera_component->output[MMAL_CAMERA_CAPTURE_PORT];
-         //if (mmal_port_parameter_set_boolean(camera_still_port, MMAL_PARAMETER_CAPTURE, pData->pstate->bCapturing) != MMAL_SUCCESS)
-         //{
-         //   vcos_log_error("%s: Failed to start capture", __func__);
-         //}
-      }
-   }
-
-   //if (complete)
-   //   vcos_semaphore_post(&(pData->complete_semaphore));
-}
+//static void still_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
+//{
+//   int complete = 0;
+//   // We pass our file handle and other stuff in via the userdata field.
+//   PORT_USERDATA *pData = (PORT_USERDATA *)port->userdata;
+//
+//   //fprintf(stderr, "still callback\n");
+//   if (pData)
+//   {
+//      int bytes_written = buffer->length;
+//      if (buffer->length && pData->file_handle)
+//      {
+//         mmal_buffer_header_mem_lock(buffer);
+//         bytes_written = fwrite(buffer->data, 1, buffer->length, pData->file_handle);
+//         mmal_buffer_header_mem_unlock(buffer);
+//      }
+//
+//      // We need to check we wrote what we wanted - it's possible we have run out of storage.
+//      //if (bytes_written != buffer->length)
+//      //{
+//      //   vcos_log_error("Unable to write buffer to file - aborting");
+//      //   complete = 1;
+//      //}
+//
+//      // Now flag if we have completed
+//      if (buffer->flags & (MMAL_BUFFER_HEADER_FLAG_FRAME_END | MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED)) {
+//         fflush(pData->file_handle);
+//         fprintf(stderr, "jpeg encode complete\n");
+//         complete = 1;
+//      }
+//   }
+//   else
+//   {
+//      vcos_log_error("Received a encoder buffer callback with no state");
+//   }
+//
+//   // release buffer back to the pool
+//   mmal_buffer_header_release(buffer);
+//
+//   // and send one back to the port (if still open)
+//   if (port->is_enabled)
+//   {
+//      MMAL_STATUS_T status = MMAL_SUCCESS;
+//      MMAL_BUFFER_HEADER_T *new_buffer;
+//
+//      new_buffer = mmal_queue_get(pData->pstate->still_encoder_pool->queue);
+//
+//      if (new_buffer)
+//      {
+//         status = mmal_port_send_buffer(port, new_buffer);
+//      }
+//      if (!new_buffer || status != MMAL_SUCCESS)
+//         vcos_log_error("Unable to return a buffer to the still encoder port");
+//
+//      if (complete)
+//      {
+//         MMAL_PORT_T *camera_still_port = pData->pstate->camera_component->output[MMAL_CAMERA_CAPTURE_PORT];
+//         //if (mmal_port_parameter_set_boolean(camera_still_port, MMAL_PARAMETER_CAPTURE, pData->pstate->bCapturing) != MMAL_SUCCESS)
+//         //{
+//         //   vcos_log_error("%s: Failed to start capture", __func__);
+//         //}
+//      }
+//   }
+//
+//   //if (complete)
+//   //   vcos_semaphore_post(&(pData->complete_semaphore));
+//}
 
 /**
  *  buffer header callback function for encoder
@@ -2579,15 +2574,9 @@ static void still_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
 static void video_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
 {
    MMAL_BUFFER_HEADER_T *new_buffer;
-   static int64_t base_time =  -1;
    static int64_t last_second = -1;
 
-   // All our segment times based on the receipt of the first encoder callback
-   if (base_time == -1)
-      base_time = get_microseconds64()/1000;
-
    // We pass our file handle and other stuff in via the userdata field.
-
    PORT_USERDATA *pData = (PORT_USERDATA *)port->userdata;
 
    if (pData)
@@ -2672,48 +2661,54 @@ static void video_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
  */
 static void mjpeg_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
 {
-   MMAL_BUFFER_HEADER_T *new_buffer;
    static int64_t base_time =  -1;
-   static int64_t last_second = -1;
+   static int receiving_frame = 0;
+   MMAL_BUFFER_HEADER_T *new_buffer;
 
-   // All our segment times based on the receipt of the first encoder callback
    if (base_time == -1)
       base_time = get_microseconds64()/1000;
 
    // We pass our file handle and other stuff in via the userdata field.
-
    PORT_USERDATA *pData = (PORT_USERDATA *)port->userdata;
 
    if (pData)
    {
       int bytes_written = buffer->length;
-      int64_t current_time = get_microseconds64()/1000;
-
       if (buffer->length)
       {
-         mmal_buffer_header_mem_lock(buffer);
          if(buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO)
          {
-            //We do not want to save inlineMotionVectors...
-            bytes_written = buffer->length;
+            // We do not want to save inlineMotionVectors...
          }
          else
          {
             //fprintf(stderr, "write mjpeg data callback\n");
             if (buffer->length && pData->file_handle)
             {
-               mmal_buffer_header_mem_lock(buffer);
-
-               bytes_written = fwrite(buffer->data, 1, buffer->length, pData->file_handle);
-
-               mmal_buffer_header_mem_unlock(buffer);
-               fflush(pData->file_handle);
+                if (receiving_frame)
+                {
+                    mmal_buffer_header_mem_lock(buffer);
+                    bytes_written = fwrite(buffer->data, 1, buffer->length, pData->file_handle);
+                    fflush(pData->file_handle);
+                    fdatasync(fileno(pData->file_handle));
+                    mmal_buffer_header_mem_unlock(buffer);
+                }
+                if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_END)
+                {
+                    if (receiving_frame)
+                        receiving_frame = 0;
+                    else
+                    {
+                        int64_t current_time = get_microseconds64()/1000;
+                        if (current_time - base_time > pData->mjpeg_frame_duration_ms)
+                        {
+                            receiving_frame = 1;
+                            base_time = current_time;
+                        }
+                    }
+                }
             }
-            //bytes_written = buffer->length;
          }
-
-         mmal_buffer_header_mem_unlock(buffer);
-
          if (bytes_written != buffer->length)
          {
             vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
@@ -2730,22 +2725,184 @@ static void mjpeg_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
 
    // release buffer back to the pool
    mmal_buffer_header_release(buffer);
-
    // and send one back to the port (if still open)
    if (port->is_enabled)
    {
       MMAL_STATUS_T status;
-
       new_buffer = mmal_queue_get(pData->pstate->mjpeg_encoder_pool->queue);
-
       if (new_buffer)
          status = mmal_port_send_buffer(port, new_buffer);
-
       if (!new_buffer || status != MMAL_SUCCESS)
-         vcos_log_error("Unable to return a buffer to the encoder port");
+         vcos_log_error("Unable to return a buffer to the mjpeg encoder port");
    }
 }
+//static void mjpeg_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
+//{
+//   MMAL_BUFFER_HEADER_T *new_buffer;
+//   // We pass our file handle and other stuff in via the userdata field.
+//   PORT_USERDATA *pData = (PORT_USERDATA *)port->userdata;
+//
+//   if (pData)
+//   {
+//      int bytes_written = buffer->length;
+//      if (buffer->length)
+//      {
+//         if(buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO)
+//         {
+//            // We do not want to save inlineMotionVectors...
+//         }
+//         else
+//         {
+//            fprintf(stderr, "write mjpeg data callback\n");
+//            if (buffer->length && pData->file_handle)
+//            {
+//               mmal_buffer_header_mem_lock(buffer);
+//               bytes_written = fwrite(buffer->data, 1, buffer->length, pData->file_handle);
+//               fflush(pData->file_handle);
+//               fdatasync(fileno(pData->file_handle));
+//               mmal_buffer_header_mem_unlock(buffer);
+//            }
+//         }
+//         if (bytes_written != buffer->length)
+//         {
+//            vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
+//            // Let's not abort for now
+//            //vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
+//            //pData->abort = 1;
+//         }
+//      }
+//   }
+//   else
+//   {
+//      vcos_log_error("Received a encoder buffer callback with no state");
+//   }
+//
+//   // release buffer back to the pool
+//   mmal_buffer_header_release(buffer);
+//   // and send one back to the port (if still open)
+//   if (port->is_enabled)
+//   {
+//      MMAL_STATUS_T status;
+//      new_buffer = mmal_queue_get(pData->pstate->mjpeg_encoder_pool->queue);
+//      if (new_buffer)
+//         status = mmal_port_send_buffer(port, new_buffer);
+//      if (!new_buffer || status != MMAL_SUCCESS)
+//         vcos_log_error("Unable to return a buffer to the mjpeg encoder port");
+//   }
+//}
 
+/**
+ *  buffer header callback function for encoder
+ *
+ *  Callback will dump buffer data to the specific file
+ *
+ * @param port Pointer to port from which callback originated
+ * @param buffer mmal buffer header pointer
+ */
+//static void mjpeg_encoder_input_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
+//{
+//   MMAL_BUFFER_HEADER_T *new_buffer;
+//   // We pass our file handle and other stuff in via the userdata field.
+//   PORT_USERDATA *pData = (PORT_USERDATA *)port->userdata;
+//   MMAL_PORT_T *isp_output_port = pData->pstate->isp_component->output[0];
+//
+//   fprintf(stderr, "mjpeg input port buffer callback\n");
+//
+//   // release buffer back to the pool
+//   mmal_buffer_header_release(buffer);
+//   // and send one back to the port (if still open)
+//   if (isp_output_port->is_enabled)
+//   {
+//      MMAL_STATUS_T status;
+//      new_buffer = mmal_queue_get(pData->pstate->isp_pool->queue);
+//      if (new_buffer)
+//         status = mmal_port_send_buffer(isp_output_port, new_buffer);
+//      if (!new_buffer || status != MMAL_SUCCESS)
+//         vcos_log_error("Unable to return a buffer to the isp port");
+//   }
+//}
+
+/**
+ *  buffer header callback function for encoder
+ *
+ *  Callback will dump buffer data to the specific file
+ *
+ * @param port Pointer to port from which callback originated
+ * @param buffer mmal buffer header pointer
+ */
+//static void isp_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer)
+//{
+//   MMAL_BUFFER_HEADER_T *new_buffer;
+//   static int64_t base_time =  -1;
+//   static int64_t last_second = -1;
+//   static int receiving_frame = 0;
+//
+//   // All our segment times based on the receipt of the first encoder callback
+//   if (base_time == -1)
+//      base_time = get_microseconds64()/1000;
+//
+//   // We pass our file handle and other stuff in via the userdata field.
+//   PORT_USERDATA *pData = (PORT_USERDATA *)port->userdata;
+//
+//   if (pData)
+//   {
+//      int64_t current_time = get_microseconds64()/1000;
+//      if (buffer->length)
+//      {
+//         if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO)
+//         {
+//            //We do not want to save inlineMotionVectors...
+//         }
+//         else
+//         {
+//            fprintf(stderr, "isp data callback\n");
+//            if (buffer->length && pData->file_handle)
+//            {
+//                if ((receiving_frame) || (current_time - base_time > pData->mjpeg_frame_duration_ms))
+//                {
+//                    fprintf(stderr, "send buffer to mjpeg\n");
+//                    receiving_frame = 1;
+//                    base_time = current_time;
+//                    if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_END)
+//                    {
+//                        // this is the end of frame
+//                        receiving_frame = 0;
+//                    }
+//                    // send this buffer to mjpeg encoder
+//                    //MMAL_PORT_T *mjpeg_encoder_input_port = pData->pstate->mjpeg_encoder_component->input[0];
+//                    //if (mjpeg_encoder_input_port->is_enabled)
+//                    //{
+//                    //    MMAL_STATUS_T status;
+//                    //    new_buffer = mmal_queue_get(pData->pstate->isp_pool->queue);
+//                    //    if (new_buffer)
+//                    //        status = mmal_port_send_buffer(mjpeg_encoder_input_port, new_buffer);
+//                    //    if (!new_buffer || status != MMAL_SUCCESS)
+//                    //        vcos_log_error("Unable to send buffer to the mjpeg encoder port");
+//                    //    return;
+//                    //}
+//                }
+//            }
+//         }
+//      }
+//   }
+//   else
+//   {
+//      vcos_log_error("Received a encoder buffer callback with no state");
+//   }
+//
+//   // release buffer back to the pool
+//   mmal_buffer_header_release(buffer);
+//   // and send one back to the port (if still open)
+//   if (port->is_enabled)
+//   {
+//      MMAL_STATUS_T status;
+//      new_buffer = mmal_queue_get(pData->pstate->isp_pool->queue);
+//      if (new_buffer)
+//         status = mmal_port_send_buffer(port, new_buffer);
+//      if (!new_buffer || status != MMAL_SUCCESS)
+//         vcos_log_error("Unable to return a buffer to the isp port");
+//   }
+//}
 
 
 
@@ -2777,7 +2934,6 @@ int main(int argc, char* argv[])
       check_disable_port(video_encoder_output_port); \
       check_disable_port(mjpeg_encoder_output_port); \
       check_disable_port(still_encoder_output_port); \
-      check_disable_port(splitter_output_port); \
       check_disable_port(isp_output_port); \
       if (state.video_encoder_connection) \
          mmal_connection_destroy(state.video_encoder_connection); \
@@ -2832,10 +2988,10 @@ int main(int argc, char* argv[])
     MMAL_PORT_T *still_encoder_output_port = NULL;
     MMAL_PORT_T *isp_input_port = NULL;
     MMAL_PORT_T *isp_output_port = NULL;
-    MMAL_PORT_T *isp_2nd_output_port = NULL;
-    MMAL_PORT_T *splitter_input_port = NULL;
-    MMAL_PORT_T *splitter_output_port = NULL;
-    MMAL_PORT_T *splitter_preview_port = NULL;
+    //MMAL_PORT_T *isp_2nd_output_port = NULL;
+    //MMAL_PORT_T *splitter_input_port = NULL;
+    //MMAL_PORT_T *splitter_output_port = NULL;
+    //MMAL_PORT_T *splitter_preview_port = NULL;
 
     bcm_host_init();
 
@@ -2872,6 +3028,8 @@ int main(int argc, char* argv[])
         print_app_details(stderr);
         dump_status(&state);
     }
+    //state.mjpeg_bitrate = (int)((int64_t)state.mjpeg_bitrate * state.bitrate / state.mjpeg_framerate);
+    //fprintf(stderr, "MJPEG internal bitrate %d\n", state.mjpeg_bitrate);
 
     check_camera_model(state.common_settings.cameraNum);
 
@@ -2916,15 +3074,15 @@ int main(int argc, char* argv[])
         destroy_video_encoder_component(&state);
         exit_code = 2;
     }
-    else if ((status = create_still_encoder_component(&state)) != MMAL_SUCCESS)
-    {
-        vcos_log_error("%s: Failed to create still encode component", __func__);
-        destroy_isp_component(&state);
-        destroy_camera_component(&state);
-        destroy_video_encoder_component(&state);
-        destroy_mjpeg_encoder_component(&state);
-        exit_code = 2;
-    }
+    //else if ((status = create_still_encoder_component(&state)) != MMAL_SUCCESS)
+    //{
+    //    vcos_log_error("%s: Failed to create still encode component", __func__);
+    //    destroy_isp_component(&state);
+    //    destroy_camera_component(&state);
+    //    destroy_video_encoder_component(&state);
+    //    destroy_mjpeg_encoder_component(&state);
+    //    exit_code = 2;
+    //}
     else
     {
         if (state.common_settings.verbose)
@@ -2936,13 +3094,13 @@ int main(int argc, char* argv[])
         //preview_input_port  = state.preview_parameters.preview_component->input[0];
         isp_input_port  = state.isp_component->input[0];
         isp_output_port = state.isp_component->output[0];
-        isp_2nd_output_port = state.isp_component->output[1];
+        //isp_2nd_output_port = state.isp_component->output[1];
         video_encoder_input_port  = state.video_encoder_component->input[0];
         video_encoder_output_port = state.video_encoder_component->output[0];
         mjpeg_encoder_input_port  = state.mjpeg_encoder_component->input[0];
         mjpeg_encoder_output_port = state.mjpeg_encoder_component->output[0];
-        still_encoder_input_port  = state.still_encoder_component->input[0];
-        still_encoder_output_port = state.still_encoder_component->output[0];
+        //still_encoder_input_port  = state.still_encoder_component->input[0];
+        //still_encoder_output_port = state.still_encoder_component->output[0];
 
         // disable EXIF
         mmal_port_parameter_set_boolean(still_encoder_output_port, MMAL_PARAMETER_EXIF_DISABLE, 1);
@@ -3002,6 +3160,7 @@ int main(int argc, char* argv[])
             fprintf(stderr, "Set up user data\n");
         state.callback_data.pstate = &state;
         state.callback_data.abort = 0;
+        state.callback_data.mjpeg_frame_duration_ms = 1000 / state.mjpeg_framerate;
         //VCOS_STATUS_T vcos_status = vcos_semaphore_create(&state.callback_data.complete_semaphore, "RaspiStill-sem", 0);
         //vcos_assert(vcos_status == VCOS_SUCCESS);
 
@@ -3063,39 +3222,54 @@ int main(int argc, char* argv[])
         // Set up our userdata - this is passed though to the callback where we need the information.
         video_encoder_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
         mjpeg_encoder_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
-        still_encoder_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
-        //isp_2nd_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
-
-        if (state.common_settings.verbose)
-            fprintf(stderr, "Enabling video encoder output port\n");
+        //mjpeg_encoder_input_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
+        //still_encoder_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
+        //isp_output_port->userdata = (struct MMAL_PORT_USERDATA_T *)&state.callback_data;
 
         // Enable the encoder output port and tell it its callback function
+        if (state.common_settings.verbose)
+            fprintf(stderr, "Enabling video encoder output port\n");
         status = mmal_port_enable(video_encoder_output_port, video_encoder_buffer_callback);
-
         if (status != MMAL_SUCCESS)
         {
             vcos_log_error("Failed to setup video encoder output");
             mmal_cleanup;
         }
 
-        if (state.common_settings.verbose)
-            fprintf(stderr, "Enabling mjpeg encoder output port\n");
+        // Enable the isp output port and tell it its callback function
+        //if (state.common_settings.verbose)
+        //    fprintf(stderr, "Enabling isp output port\n");
+        //status = mmal_port_enable(isp_output_port, isp_buffer_callback);
+        //if (status != MMAL_SUCCESS)
+        //{
+        //    vcos_log_error("Failed to setup isp output");
+        //    mmal_cleanup;
+        //}
 
         // Enable the encoder output port and tell it its callback function
+        if (state.common_settings.verbose)
+            fprintf(stderr, "Enabling mjpeg encoder output port\n");
         status = mmal_port_enable(mjpeg_encoder_output_port, mjpeg_encoder_buffer_callback);
-
         if (status != MMAL_SUCCESS)
         {
             vcos_log_error("Failed to setup mjpeg encoder output");
             mmal_cleanup;
         }
 
+        // Enable the encoder output port and tell it its callback function
+        //if (state.common_settings.verbose)
+        //    fprintf(stderr, "Enabling mjpeg encoder input port\n");
+        //status = mmal_port_enable(mjpeg_encoder_input_port, mjpeg_encoder_input_buffer_callback);
+        //if (status != MMAL_SUCCESS)
+        //{
+        //    vcos_log_error("Failed to setup mjpeg encoder input");
+        //    mmal_cleanup;
+        //}
+
+        //// Enable the encoder output port and tell it its callback function
         //if (state.common_settings.verbose)
         //    fprintf(stderr, "Enabling still encoder output port\n");
-        //
-        //// Enable the encoder output port and tell it its callback function
         //status = mmal_port_enable(still_encoder_output_port, still_encoder_buffer_callback);
-        //
         //if (status != MMAL_SUCCESS)
         //{
         //    vcos_log_error("Failed to setup still encoder output");
@@ -3110,23 +3284,30 @@ int main(int argc, char* argv[])
         for (q=0; q<num; q++)
         {
            MMAL_BUFFER_HEADER_T *buffer = mmal_queue_get(state.video_encoder_pool->queue);
-
            if (!buffer)
               vcos_log_error("Unable to get a required buffer %d from pool queue", q);
-
            if (mmal_port_send_buffer(video_encoder_output_port, buffer)!= MMAL_SUCCESS)
               vcos_log_error("Unable to send a buffer to video encoder output port (%d)", q);
         }
+
+        // Send all the buffers to the isp output port
+        //num = mmal_queue_length(state.isp_pool->queue);
+        //for (q=0; q<num; q++)
+        //{
+        //   MMAL_BUFFER_HEADER_T *buffer = mmal_queue_get(state.isp_pool->queue);
+        //   if (!buffer)
+        //      vcos_log_error("Unable to get a required buffer %d from pool queue", q);
+        //   if (mmal_port_send_buffer(isp_output_port, buffer)!= MMAL_SUCCESS)
+        //      vcos_log_error("Unable to send a buffer to isp output port (%d)", q);
+        //}
 
         // Send all the buffers to the mjpeg encoder output port
         num = mmal_queue_length(state.mjpeg_encoder_pool->queue);
         for (q=0; q<num; q++)
         {
            MMAL_BUFFER_HEADER_T *buffer = mmal_queue_get(state.mjpeg_encoder_pool->queue);
-
            if (!buffer)
               vcos_log_error("Unable to get a required buffer %d from pool queue", q);
-
            if (mmal_port_send_buffer(mjpeg_encoder_output_port, buffer)!= MMAL_SUCCESS)
               vcos_log_error("Unable to send a buffer to mjpeg encoder output port (%d)", q);
         }
@@ -3136,10 +3317,8 @@ int main(int argc, char* argv[])
         //for (q=0; q<num; q++)
         //{
         //   MMAL_BUFFER_HEADER_T *buffer = mmal_queue_get(state.still_encoder_pool->queue);
-        //
         //   if (!buffer)
         //      vcos_log_error("Unable to get a required buffer %d from pool queue", q);
-        //
         //   if (mmal_port_send_buffer(still_encoder_output_port, buffer)!= MMAL_SUCCESS)
         //      vcos_log_error("Unable to send a buffer to still encoder output port (%d)", q);
         //}
