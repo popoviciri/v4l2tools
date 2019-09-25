@@ -44,10 +44,10 @@ extern "C"
 //#include "RaspiGPS.h"
 }
 
-#include "logger.h"
+//#include "logger.h"
 
 #include "V4l2Device.h"
-#include "V4l2Capture.h"
+//#include "V4l2Capture.h"
 #include "V4l2Output.h"
 
 //#include "encode_omx.h"
@@ -68,6 +68,10 @@ extern "C"
 
 /// Video render needs at least 2 buffers.
 #define VIDEO_OUTPUT_BUFFERS_NUM 3
+
+#define H264_OUTPUT_BUFFERS_NUM 4
+
+#define SUPPORT_FRAGMENTED_FRAMES           1
 
 // Max bitrate we allow for recording
 const int MAX_BITRATE_MJPEG = 25000000; // 25Mbits/s
@@ -104,6 +108,10 @@ typedef struct
    int  flush_buffers;
    //FILE *pts_file_handle;               /// File timestamps
    int64_t mjpeg_frame_duration_ms;
+#if SUPPORT_FRAGMENTED_FRAMES
+   MMAL_BUFFER_HEADER_T *video_output_fragments[H264_OUTPUT_BUFFERS_NUM];
+   int num_video_output_fragments;
+#endif
 } PORT_USERDATA;
 
 /** Possible raw output formats
@@ -1714,19 +1722,21 @@ static MMAL_STATUS_T create_video_encoder_component(MMALCAM_STATE *state)
 
    encoder_output->format->bitrate = state->bitrate;
 
-   if (state->video_encoding == MMAL_ENCODING_H264)
-      encoder_output->buffer_size = encoder_output->buffer_size_recommended << 1;
-   else
-      encoder_output->buffer_size = 256<<10;
+   //encoder_output->buffer_size = encoder_output->buffer_size_recommended << 1;
+   encoder_output->buffer_size = 256<<10;
    fprintf(stderr, "h264 buffer size: %u\n", encoder_output->buffer_size);
 
    if (encoder_output->buffer_size < encoder_output->buffer_size_min)
       encoder_output->buffer_size = encoder_output->buffer_size_min;
 
    encoder_output->buffer_num = encoder_output->buffer_num_recommended;
-
+#if SUPPORT_FRAGMENTED_FRAMES
+   if (encoder_output->buffer_num < H264_OUTPUT_BUFFERS_NUM)
+      encoder_output->buffer_num = H264_OUTPUT_BUFFERS_NUM;
+#endif
    if (encoder_output->buffer_num < encoder_output->buffer_num_min)
       encoder_output->buffer_num = encoder_output->buffer_num_min;
+   fprintf(stderr, "h264 num buffer: %u\n", encoder_output->buffer_num);
 
    // We need to set the frame rate on output to 0, to ensure it gets
    // updated correctly from the input framerate when port connected
@@ -2055,6 +2065,7 @@ static MMAL_STATUS_T create_mjpeg_encoder_component(MMALCAM_STATE *state)
 
    if (encoder_output->buffer_num < encoder_output->buffer_num_min)
       encoder_output->buffer_num = encoder_output->buffer_num_min;
+   fprintf(stderr, "mjpeg num buffer: %u\n", encoder_output->buffer_num);
 
    // We need to set the frame rate on output to 0, to ensure it gets
    // updated correctly from the input framerate when port connected
@@ -2583,18 +2594,20 @@ static void video_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
    {
       int bytes_written = buffer->length;
       int64_t current_time = get_microseconds64()/1000;
+      int no_buffer_release = 0;
 
       vcos_assert(pData->pstate->videoOutput);
       if(pData->pstate->inlineMotionVectors) vcos_assert(pData->imv_file_handle);
 
       if (buffer->length)
       {
-         mmal_buffer_header_mem_lock(buffer);
          if(buffer->flags & MMAL_BUFFER_HEADER_FLAG_CODECSIDEINFO)
          {
             if(pData->pstate->inlineMotionVectors)
             {
+               mmal_buffer_header_mem_lock(buffer);
                bytes_written = fwrite(buffer->data, 1, buffer->length, pData->imv_file_handle);
+               mmal_buffer_header_mem_unlock(buffer);
                if(pData->flush_buffers) fflush(pData->imv_file_handle);
             }
             else
@@ -2603,22 +2616,124 @@ static void video_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
                bytes_written = buffer->length;
             }
          }
+         else if(buffer->flags & MMAL_BUFFER_HEADER_FLAG_CONFIG)
+         {
+            // These are the header bytes. What do we do with them?
+            bytes_written = 0;
+            int ret = 1;
+            mmal_buffer_header_mem_lock(buffer);
+            while ((ret > 0) && (bytes_written < buffer->length))
+            {
+                ret = pData->pstate->videoOutput->write(((char*)buffer->data)+bytes_written, buffer->length-bytes_written);
+                if (ret > 0)
+                    bytes_written += ret;
+            }
+            mmal_buffer_header_mem_unlock(buffer);
+         }
          else
          {
-            //fprintf(stderr, "write video data callback\n");
-            bytes_written = pData->pstate->videoOutput->write((char*)buffer->data, buffer->length);
-            //bytes_written = buffer->length;
+            //if (buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_END)
+            //    fprintf(stderr, "1");
+            //else
+            //    fprintf(stderr, "0");
+
+#if SUPPORT_FRAGMENTED_FRAMES
+            no_buffer_release = 1;
+            int write_video_out = 0;
+            pData->video_output_fragments[pData->num_video_output_fragments++] = buffer;
+            if ((buffer->flags & MMAL_BUFFER_HEADER_FLAG_FRAME_END) ||
+                (pData->num_video_output_fragments >= H264_OUTPUT_BUFFERS_NUM))
+                write_video_out = 1;
+            if (write_video_out)
+            {
+                int i;
+                bytes_written = 0;
+                if (pData->num_video_output_fragments == 1)
+                {
+                    // single buffer frame
+                    int ret = 1;
+                    mmal_buffer_header_mem_lock(buffer);
+                    while ((ret > 0) && (bytes_written < buffer->length))
+                    {
+                        ret = pData->pstate->videoOutput->write(((char*)buffer->data)+bytes_written, buffer->length-bytes_written);
+                        if (ret > 0)
+                            bytes_written += ret;
+                    }
+                    mmal_buffer_header_mem_unlock(buffer);
+                }
+                else
+                {
+                    // fragmented frame
+#if V4L2WRAPPER_SUPPORT_PARTIAL_WRITE
+                    if (pData->pstate->videoOutput->startPartialWrite())
+                    {
+                        mmal_buffer_header_mem_lock(buffer);
+                        for (i = 0; i < pData->num_video_output_fragments; i++)
+                        {
+                            MMAL_BUFFER_HEADER_T *tmpbuffer = pData->video_output_fragments[i];
+                            bytes_written += pData->pstate->videoOutput->writePartial((char*)tmpbuffer->data, tmpbuffer->length);
+                        }
+                        mmal_buffer_header_mem_unlock(buffer);
+                        pData->pstate->videoOutput->endPartialWrite();
+                    }
+#else
+                    unsigned int full_frame_size = 0;
+                    for (i = 0; i < pData->num_video_output_fragments; i++)
+                        full_frame_size += pData->video_output_fragments[i]->length;
+                    char *frame = (char *)malloc(full_frame_size);
+                    if (frame)
+                    {
+                        mmal_buffer_header_mem_lock(buffer);
+                        for (i = 0; i < pData->num_video_output_fragments; i++)
+                        {
+                            MMAL_BUFFER_HEADER_T *tmpbuffer = pData->video_output_fragments[i];
+                            memcpy(&frame[bytes_written], tmpbuffer->data, tmpbuffer->length);
+                            bytes_written += tmpbuffer->length;
+                        }
+                        mmal_buffer_header_mem_unlock(buffer);
+                        if (bytes_written)
+                            bytes_written = pData->pstate->videoOutput->write(frame, bytes_written);
+                        free(frame);
+                        frame = NULL;
+                    }
+#endif
+                }
+                for (i = 0; i < pData->num_video_output_fragments; i++)
+                    mmal_buffer_header_release(pData->video_output_fragments[i]);
+                for (i = 0; i < pData->num_video_output_fragments; i++)
+                {
+                    MMAL_STATUS_T status;
+                    new_buffer = mmal_queue_get(pData->pstate->video_encoder_pool->queue);
+                    if (new_buffer)
+                       status = mmal_port_send_buffer(port, new_buffer);
+                    if (!new_buffer || status != MMAL_SUCCESS)
+                       vcos_log_error("Unable to return a buffer to the encoder port");
+                }
+                pData->num_video_output_fragments = 0;
+            }
+
+#else // SUPPORT_FRAGMENTED_FRAMES
+            bytes_written = 0;
+            int ret = 1;
+            mmal_buffer_header_mem_lock(buffer);
+            while ((ret > 0) && (bytes_written < buffer->length))
+            {
+                ret = pData->pstate->videoOutput->write(((char*)buffer->data)+bytes_written, buffer->length-bytes_written);
+                if (ret > 0)
+                    bytes_written += ret;
+            }
+            mmal_buffer_header_mem_unlock(buffer);
+#endif // SUPPORT_FRAGMENTED_FRAMES
          }
 
-         mmal_buffer_header_mem_unlock(buffer);
 
-         if (bytes_written != buffer->length)
-         {
-            vcos_log_error("video: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
-            // Let's not abort for now
-            //vcos_log_error("video: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
-            //pData->abort = 1;
-         }
+         //if (bytes_written != buffer->length)
+         //{
+         //   vcos_log_error("video: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
+         //   // Let's not abort for now
+         //   //vcos_log_error("video: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
+         //   //pData->abort = 1;
+         //}
       }
 
       // See if the second count has changed and we need to update any annotation
@@ -2627,6 +2742,11 @@ static void video_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
          update_annotation_data(pData->pstate);
          last_second = current_time/1000;
       }
+
+#if SUPPORT_FRAGMENTED_FRAMES
+      if (no_buffer_release)
+         return;
+#endif
    }
    else
    {
@@ -2697,25 +2817,22 @@ static void mjpeg_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
                 {
                     if (receiving_frame)
                         receiving_frame = 0;
-                    else
+                    int64_t current_time = get_microseconds64()/1000;
+                    if (current_time - base_time > pData->mjpeg_frame_duration_ms)
                     {
-                        int64_t current_time = get_microseconds64()/1000;
-                        if (current_time - base_time > pData->mjpeg_frame_duration_ms)
-                        {
-                            receiving_frame = 1;
-                            base_time = current_time;
-                        }
+                        receiving_frame = 1;
+                        base_time = current_time;
                     }
                 }
             }
          }
-         if (bytes_written != buffer->length)
-         {
-            vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
-            // Let's not abort for now
-            //vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
-            //pData->abort = 1;
-         }
+         //if (bytes_written != buffer->length)
+         //{
+         //   vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
+         //   // Let's not abort for now
+         //   //vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
+         //   //pData->abort = 1;
+         //}
       }
    }
    else
@@ -3028,13 +3145,17 @@ int main(int argc, char* argv[])
         print_app_details(stderr);
         dump_status(&state);
     }
-    //state.mjpeg_bitrate = (int)((int64_t)state.mjpeg_bitrate * state.bitrate / state.mjpeg_framerate);
-    //fprintf(stderr, "MJPEG internal bitrate %d\n", state.mjpeg_bitrate);
+
+#if SUPPORT_FRAGMENTED_FRAMES
+    fprintf(stderr, "Fragmented frame is supported\n");
+#else
+    fprintf(stderr, "Fragmented frame is NOT supported\n");
+#endif
+#if V4L2WRAPPER_SUPPORT_PARTIAL_WRITE
+    fprintf(stderr, "libv4l2cpp supports partial writes\n");
+#endif
 
     check_camera_model(state.common_settings.cameraNum);
-
-    // initialize log4cpp
-    //initLogger(state.common_settings.verbose);
 
     // init V4L2 output interface
     V4L2DeviceParameters outparam(state.v4l2loopback_dev, V4L2_PIX_FMT_H264, state.common_settings.width, state.common_settings.height, 0, state.common_settings.verbose);
@@ -3161,6 +3282,9 @@ int main(int argc, char* argv[])
         state.callback_data.pstate = &state;
         state.callback_data.abort = 0;
         state.callback_data.mjpeg_frame_duration_ms = 1000 / state.mjpeg_framerate;
+#if SUPPORT_FRAGMENTED_FRAMES
+        state.callback_data.num_video_output_fragments = 0;
+#endif
         //VCOS_STATUS_T vcos_status = vcos_semaphore_create(&state.callback_data.complete_semaphore, "RaspiStill-sem", 0);
         //vcos_assert(vcos_status == VCOS_SUCCESS);
 
