@@ -1714,9 +1714,9 @@ static MMAL_STATUS_T create_video_encoder_component(MMALCAM_STATE *state)
 
    encoder_output->format->bitrate = state->bitrate;
 
-   if (state->video_encoding == MMAL_ENCODING_H264)
-      encoder_output->buffer_size = encoder_output->buffer_size_recommended << 1;
-   else
+   //if (state->video_encoding == MMAL_ENCODING_H264)
+   //   encoder_output->buffer_size = encoder_output->buffer_size_recommended << 1;
+   //else
       encoder_output->buffer_size = 256<<10;
    fprintf(stderr, "h264 buffer size: %u\n", encoder_output->buffer_size);
 
