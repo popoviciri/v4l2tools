@@ -2697,25 +2697,22 @@ static void mjpeg_encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_
                 {
                     if (receiving_frame)
                         receiving_frame = 0;
-                    else
+                    int64_t current_time = get_microseconds64()/1000;
+                    if (current_time - base_time > pData->mjpeg_frame_duration_ms)
                     {
-                        int64_t current_time = get_microseconds64()/1000;
-                        if (current_time - base_time > pData->mjpeg_frame_duration_ms)
-                        {
-                            receiving_frame = 1;
-                            base_time = current_time;
-                        }
+                        receiving_frame = 1;
+                        base_time = current_time;
                     }
                 }
             }
          }
-         if (bytes_written != buffer->length)
-         {
-            vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
-            // Let's not abort for now
-            //vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
-            //pData->abort = 1;
-         }
+         //if (bytes_written != buffer->length)
+         //{
+         //   vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)", bytes_written, buffer->length);
+         //   // Let's not abort for now
+         //   //vcos_log_error("mjpeg: Failed to write buffer data (%d from %d)- aborting", bytes_written, buffer->length);
+         //   //pData->abort = 1;
+         //}
       }
    }
    else
