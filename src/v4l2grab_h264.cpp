@@ -58,11 +58,14 @@ int main(int argc, char **argv)
 	int y = 0;	
 	int width = 0;
 	int height = 0;	
+	int bandwidth = 10000000;
 	V4l2Access::IoType ioTypeOut = V4l2Access::IOTYPE_MMAP;
 	int verbose = 0;
+	OMX_VIDEO_AVCPROFILETYPE profile = OMX_VIDEO_AVCProfileHigh;
+	OMX_VIDEO_AVCLEVELTYPE level = OMX_VIDEO_AVCLevel4;	
 	
 	int c = 0;
-	while ((c = getopt (argc, argv, "hv::" "X:Y:W:H:" "w")) != -1)
+	while ((c = getopt (argc, argv, "hv::" "X:Y:W:H:" "w" "b:p:l:")) != -1)
 	{
 		switch (c)
 		{
@@ -71,7 +74,11 @@ int main(int argc, char **argv)
 			case 'Y':	y = atoi(optarg); break;			
 			case 'W':	width = atoi(optarg); break;
 			case 'H':	height = atoi(optarg); break;			
-			case 'w':	ioTypeOut = V4l2Access::IOTYPE_READWRITE; break;	
+			case 'w':	ioTypeOut = V4l2Access::IOTYPE_READWRITE; break;
+
+			case 'p':   profile = decodeProfile(optarg); break;	
+			case 'l':   level = decodeLevel(optarg); break;		
+			case 'b':   bandwidth = atoi(optarg); break;					
 			
 			case 'h':
 			{
@@ -83,8 +90,12 @@ int main(int argc, char **argv)
 				std::cout << "\t -Y y          : display capture y origin (default "<< y << ")" << std::endl;
 				std::cout << "\t -W width      : display capture width (default "<< width << ")" << std::endl;
 				std::cout << "\t -H height     : display capture height (default "<< height << ")" << std::endl;
+
 				std::cout << "\t -w            : V4L2 output using write interface (default use memory mapped buffers)" << std::endl;				
-								
+
+				std::cout << "\t -p profile    : H264 profile (default "<< profile << ")" << std::endl;
+				std::cout << "\t -l level      : H264 level (default "<< level << ")" << std::endl;
+
 				std::cout << "\t dest_device   : V4L2 output device (default "<< out_devname << ")" << std::endl;
 				exit(0);
 			}
@@ -135,7 +146,7 @@ int main(int argc, char **argv)
 	V4l2Output* videoOutput = V4l2Output::create(outparam, ioTypeOut);
 	if (videoOutput == NULL)
 	{	
-		LOG(WARN) << "Cannot create V4L2 output interface for device:" << argv[1]; 
+		LOG(WARN) << "Cannot create V4L2 output interface for device:" << out_devname; 
 		status = -1;
 	}
 	else
@@ -146,7 +157,7 @@ int main(int argc, char **argv)
 		if (client)
 		{
 			encode_config_input(video_encode, width, height, 30, OMX_COLOR_Format24bitBGR888);
-			encode_config_output(video_encode, OMX_VIDEO_CodingAVC, 10000000);
+			encode_config_output(video_encode, OMX_VIDEO_CodingAVC, bandwidth, profile, level);
 
 			encode_config_activate(video_encode);
 
@@ -170,11 +181,6 @@ int main(int argc, char **argv)
 				OMX_BUFFERHEADERTYPE *out = ilclient_get_output_buffer(video_encode, 201, 0);
 				if (out != NULL)
 				{
-					OMX_ERRORTYPE r = OMX_FillThisBuffer(ILC_GET_HANDLE(video_encode), out);
-					if (r != OMX_ErrorNone)
-					{
-						LOG(WARN) << "Error filling buffer:" << r ; 
-					}
 					if (out->nFilledLen > 0)
 					{
 						size_t sz = videoOutput->write((char*)out->pBuffer, out->nFilledLen);
@@ -189,6 +195,12 @@ int main(int argc, char **argv)
 					}
 					
 					out->nFilledLen = 0;
+
+					OMX_ERRORTYPE r = OMX_FillThisBuffer(ILC_GET_HANDLE(video_encode), out);
+					if (r != OMX_ErrorNone)
+					{
+						LOG(WARN) << "Error filling buffer:" << r ; 
+					}
 				}
 
 			} 

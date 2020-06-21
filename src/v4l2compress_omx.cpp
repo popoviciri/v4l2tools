@@ -59,17 +59,21 @@ int main(int argc, char* argv[])
 	V4l2Access::IoType ioTypeIn  = V4l2Access::IOTYPE_MMAP;
 	V4l2Access::IoType ioTypeOut = V4l2Access::IOTYPE_MMAP;
 	int openflags = O_RDWR | O_NONBLOCK;
+	OMX_VIDEO_AVCPROFILETYPE profile = OMX_VIDEO_AVCProfileHigh;
+	OMX_VIDEO_AVCLEVELTYPE level = OMX_VIDEO_AVCLevel4;
 	
 	int c = 0;
-	while ((c = getopt (argc, argv, "hv::rwBb:")) != -1)
+	while ((c = getopt (argc, argv, "hv::" "rw" "Bb:p:l:")) != -1)
 	{
 		switch (c)
 		{
-			case 'v':	verbose = 1; if (optarg && *optarg=='v') verbose++;  break;
-			case 'r':	ioTypeIn  = V4l2Access::IOTYPE_READWRITE; break;			
-			case 'w':	ioTypeOut = V4l2Access::IOTYPE_READWRITE; break;	
+			case 'v':   verbose = 1; if (optarg && *optarg=='v') verbose++;  break;
+			case 'r':   ioTypeIn  = V4l2Access::IOTYPE_READWRITE; break;			
+			case 'w':   ioTypeOut = V4l2Access::IOTYPE_READWRITE; break;	
                         case 'B':   openflags = O_RDWR; break;			
 			case 'b':   bandwidth = atoi(optarg); break;	
+			case 'p':   profile = decodeProfile(optarg); break;	
+			case 'l':   level = decodeLevel(optarg); break;	
 			case 'h':
 			{
 				std::cout << argv[0] << " [-v[v]] source_device dest_device" << std::endl;
@@ -77,6 +81,10 @@ int main(int argc, char* argv[])
 				std::cout << "\t -vv           : very verbose " << std::endl;
 				std::cout << "\t -r            : V4L2 capture using read interface (default use memory mapped buffers)" << std::endl;
 				std::cout << "\t -w            : V4L2 capture using write interface (default use memory mapped buffers)" << std::endl;
+
+				std::cout << "\t -p profile    : H264 profile (default "<< profile << ")" << std::endl;
+				std::cout << "\t -l level      : H264 level (default "<< level << ")" << std::endl;
+								
 				std::cout << "\t source_device : V4L2 capture device (default "<< in_devname << ")" << std::endl;
 				std::cout << "\t dest_device   : V4L2 capture device (default "<< out_devname << ")" << std::endl;
 				exit(0);
@@ -131,7 +139,7 @@ int main(int argc, char* argv[])
 			if (client)
 			{
 				encode_config_input(video_encode, width, height, 30, OMX_COLOR_FormatYUV420PackedPlanar);
-				encode_config_output(video_encode, OMX_VIDEO_CodingAVC, bandwidth);
+				encode_config_output(video_encode, OMX_VIDEO_CodingAVC, bandwidth, profile, level);
 
 				encode_config_activate(video_encode);		
 				
@@ -206,14 +214,15 @@ int main(int argc, char* argv[])
 								LOG(DEBUG) << "Writing frame size:" << sz; 
 							}
 							out->nFilledLen = 0;
+
+							OMX_ERRORTYPE r = OMX_FillThisBuffer(ILC_GET_HANDLE(video_encode), out);
+							if (r != OMX_ErrorNone) {
+								printf("Error sending buffer for filling: %x\n", r);
+							}					
 						} else {
 							LOG(DEBUG) << "Not getting it "; 
 						}
 						
-						OMX_ERRORTYPE r = OMX_FillThisBuffer(ILC_GET_HANDLE(video_encode), out);
-						if (r != OMX_ErrorNone) {
-							printf("Error sending buffer for filling: %x\n", r);
-						}					
 					}
 					else if (ret == -1)
 					{
